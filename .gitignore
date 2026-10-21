@@ -1,0 +1,30 @@
+# Build output
+/target/
+
+# Rustfmt backup files
+**/*.rs.bk
+
+# MSVC debug info
+*.pdb
+
+# Code coverage / profiling
+*.profraw
+*.profdata
+/coverage/
+
+# Environment files
+.env
+.env.*
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Note: Cargo.lock is intentionally committed for binary crates.
