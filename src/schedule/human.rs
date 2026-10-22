@@ -46,7 +46,6 @@ pub enum HumanError {
     Unrecognised,
 }
 
-/// `Ok(None)` when the input is not human syntax and should be parsed as cron.
 pub fn to_cron(input: &str) -> Result<Option<String>, HumanError> {
     let lower = input.to_ascii_lowercase();
     let words: Vec<&str> = lower.split_whitespace().collect();

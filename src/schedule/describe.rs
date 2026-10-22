@@ -241,7 +241,6 @@ mod tests {
             ("@weekly", "At 00:00, on Sunday"),
             ("@monthly", "At 00:00, on day 1 of the month"),
             ("@yearly", "At 00:00, on day 1 of the month in January"),
-            // Human syntax.
             ("every 15m", "Every 15th minute"),
             ("every 2h", "At minute 0 past every 2nd hour"),
             ("daily at 02:30", "At 02:30, every day"),
