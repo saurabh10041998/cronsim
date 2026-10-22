@@ -5,6 +5,7 @@ mod calendar;
 mod describe;
 mod error;
 mod field;
+mod human;
 
 use std::fmt;
 use std::str::FromStr;
@@ -126,10 +127,12 @@ impl FromStr for Schedule {
             ALIASES
                 .iter()
                 .find(|(alias, _)| alias.eq_ignore_ascii_case(source))
-                .map(|(_, expr)| *expr)
+                .map(|(_, expr)| expr.to_string())
                 .ok_or_else(|| ScheduleError::UnknownAlias(source.to_string()))?
         } else {
-            source
+            human::to_cron(source)
+                .map_err(ScheduleError::Human)?
+                .unwrap_or_else(|| source.to_string())
         };
 
         let parts: Vec<&str> = expr.split_whitespace().collect();
@@ -179,6 +182,11 @@ mod tests {
             ("@yearly", "0 0 1 1 *"),
             ("@ANNUALLY", "0 0 1 1 *"),
             ("  30\t2  * *   MON-FRI ", "30 2 * * MON-FRI"),
+            ("every 15m", "*/15 * * * *"),
+            ("every 2h", "0 */2 * * *"),
+            ("daily at 02:30", "30 2 * * *"),
+            ("weekdays at 9:00", "0 9 * * 1-5"),
+            ("mon,thu at 18:15", "15 18 * * 1,4"),
         ] {
             let schedule = parse(input);
             assert_eq!(schedule.to_string(), normalised, "{input:?}");
@@ -193,7 +201,18 @@ mod tests {
             ("", ScheduleError::Empty),
             ("   ", ScheduleError::Empty),
             ("* * * *", ScheduleError::FieldCount(4)),
-            ("every 15m", ScheduleError::FieldCount(2)),
+            ("1 2", ScheduleError::FieldCount(2)),
+            (
+                "every 7m",
+                ScheduleError::Human(human::HumanError::Uneven {
+                    n: "7".into(),
+                    unit: human::Unit::Minute,
+                }),
+            ),
+            (
+                "evry 15m",
+                ScheduleError::Human(human::HumanError::Unrecognised),
+            ),
             ("0 0 1 1 * 2030 x", ScheduleError::FieldCount(7)),
             ("0 */5 * * * *", ScheduleError::SecondsField),
             ("@reboot", ScheduleError::Reboot),
