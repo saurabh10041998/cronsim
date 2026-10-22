@@ -1,10 +1,12 @@
 mod cli;
+mod schedule;
 
 use std::process::ExitCode;
 
 use clap::Parser;
 
 use cli::{AddArgs, Cli, Command};
+use schedule::Schedule;
 
 fn main() -> ExitCode {
     dispatch(Cli::parse());
@@ -19,13 +21,25 @@ fn dispatch(cli: Cli) {
             schedule,
             script: Some(script),
             ..
-        }) => println!("add: name={name:?} schedule={schedule:?} script={script:?}"),
+        }) => {
+            println!(
+                "add: name={name:?} schedule={} script={script:?}",
+                label(&schedule)
+            );
+            explain(&schedule);
+        }
         Command::Add(AddArgs {
             name,
             schedule,
             cmd,
             ..
-        }) => println!("add: name={name:?} schedule={schedule:?} command={cmd:?}"),
+        }) => {
+            println!(
+                "add: name={name:?} schedule={} command={cmd:?}",
+                label(&schedule)
+            );
+            explain(&schedule);
+        }
         Command::List { json } => println!("list: json={json}"),
         Command::Status { name, json } => println!("status: name={name:?} json={json}"),
         Command::Logs { name, run, follow } => {
@@ -35,8 +49,30 @@ fn dispatch(cli: Cli) {
         Command::Pause { name } => println!("pause: name={name:?}"),
         Command::Resume { name } => println!("resume: name={name:?}"),
         Command::Remove { name, purge } => println!("remove: name={name:?} purge={purge}"),
-        Command::Next { schedule, count } => println!("next: schedule={schedule:?} count={count}"),
+        Command::Next { schedule, count } => {
+            println!("next: schedule={} count={count}", label(&schedule));
+            explain(&schedule);
+        }
         Command::Doctor => println!("doctor"),
         Command::Exec { name } => println!("exec: name={name:?}"),
+    }
+}
+
+/// The normalised schedule, plus what the user typed when that differs
+/// by more than whitespace (aliases).
+fn label(schedule: &Schedule) -> String {
+    let normalised = schedule.to_string();
+    let typed = schedule.source().split_whitespace().collect::<Vec<_>>();
+    if typed.join(" ") == normalised {
+        format!("{normalised:?}")
+    } else {
+        format!("{normalised:?} (from {:?})", schedule.source())
+    }
+}
+
+fn explain(schedule: &Schedule) {
+    println!("meaning: {}", schedule.describe());
+    for warning in schedule.warnings() {
+        eprintln!("warning: {warning}");
     }
 }

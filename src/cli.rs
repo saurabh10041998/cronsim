@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use clap::{ArgGroup, Args, Parser, Subcommand};
 
+use crate::schedule::Schedule;
+
 const MAX_JOB_NAME_LEN: usize = 64;
 
 #[derive(Debug, Parser)]
@@ -68,7 +70,8 @@ pub enum Command {
     },
     /// Show the next fire times of a schedule without scheduling anything
     Next {
-        schedule: String,
+        /// Cron expression, e.g. "*/15 * * * *" or "@daily"
+        schedule: Schedule,
         /// Number of fire times to show
         #[arg(
             short = 'n',
@@ -93,9 +96,9 @@ pub enum Command {
 pub struct AddArgs {
     #[arg(value_parser = parse_job_name)]
     pub name: String,
-    /// Cron expression or human-readable schedule, e.g. "every 15m"
+    /// Cron expression, e.g. "*/15 * * * *" or "@daily"
     #[arg(short, long)]
-    pub schedule: String,
+    pub schedule: Schedule,
     /// Script to run
     #[arg(long, group = "target", value_name = "PATH")]
     pub script: Option<PathBuf>,
@@ -141,7 +144,7 @@ mod tests {
             "add",
             "backup",
             "-s",
-            "every 15m",
+            "*/15 * * * *",
             "--",
             "tar",
             "-czf",
@@ -152,7 +155,7 @@ mod tests {
             panic!("expected add");
         };
         assert_eq!(add.name, "backup");
-        assert_eq!(add.schedule, "every 15m");
+        assert_eq!(add.schedule.to_string(), "*/15 * * * *");
         assert_eq!(add.cmd, ["tar", "-czf", "b.tgz"]);
         assert!(add.script.is_none());
     }
@@ -163,7 +166,7 @@ mod tests {
             "add",
             "report",
             "--schedule",
-            "daily at 02:30",
+            "30 2 * * *",
             "--script",
             "./r.sh",
         ])
@@ -239,6 +242,18 @@ mod tests {
         }
         for bad in ["", &"x".repeat(65), "a/b", "a.b", "a b", "jöb", ".."] {
             assert!(parse_job_name(bad).is_err(), "{bad:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn invalid_schedule_is_rejected_by_cli() {
+        for args in [
+            &["next", "61 * * * *"][..],
+            &["next", "every 15m"],
+            &["add", "j", "-s", "@reboot", "--", "ls"],
+        ] {
+            let err = parse(args).unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::ValueValidation, "{args:?}");
         }
     }
 

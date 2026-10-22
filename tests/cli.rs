@@ -12,7 +12,7 @@ fn add_command_prints_parameters() {
             "add",
             "backup",
             "-s",
-            "every 15m",
+            "*/15 * * * *",
             "--",
             "tar",
             "czf",
@@ -21,10 +21,11 @@ fn add_command_prints_parameters() {
         .assert()
         .success()
         .stdout(
-            r#"add: name="backup" schedule="every 15m" command=["tar", "czf", "/tmp/b.tgz"]"#
-                .to_owned()
-                + "\n",
-        );
+            r#"add: name="backup" schedule="*/15 * * * *" command=["tar", "czf", "/tmp/b.tgz"]
+meaning: Every 15th minute
+"#,
+        )
+        .stderr("");
 }
 
 #[test]
@@ -34,13 +35,28 @@ fn add_script_prints_raw_path() {
             "add",
             "report",
             "-s",
-            "daily at 02:30",
+            "30 2 * * *",
             "--script",
             "./report.sh",
         ])
         .assert()
         .success()
-        .stdout("add: name=\"report\" schedule=\"daily at 02:30\" script=\"./report.sh\"\n");
+        .stdout(
+            "add: name=\"report\" schedule=\"30 2 * * *\" script=\"./report.sh\"\n\
+             meaning: At 02:30, every day\n",
+        );
+}
+
+#[test]
+fn alias_shows_normalised_and_typed_schedule() {
+    cronsim()
+        .args(["add", "backup", "-s", "@daily", "--", "./backup.sh"])
+        .assert()
+        .success()
+        .stdout(
+            "add: name=\"backup\" schedule=\"0 0 * * *\" (from \"@daily\") command=[\"./backup.sh\"]\n\
+             meaning: At 00:00, every day\n",
+        );
 }
 
 #[test]
@@ -55,10 +71,43 @@ fn logs_prints_parameters() {
 #[test]
 fn next_uses_default_count() {
     cronsim()
-        .args(["next", "*/5 * * * *"])
+        .args(["next", "30 2 * * 1-5"])
         .assert()
         .success()
-        .stdout("next: schedule=\"*/5 * * * *\" count=5\n");
+        .stdout(
+            "next: schedule=\"30 2 * * 1-5\" count=5\n\
+             meaning: At 02:30, Monday through Friday\n",
+        );
+}
+
+#[test]
+fn warnings_go_to_stderr() {
+    cronsim()
+        .args(["next", "*/7 * * * *"])
+        .assert()
+        .success()
+        .stdout("next: schedule=\"*/7 * * * *\" count=5\nmeaning: Every 7th minute\n")
+        .stderr(
+            "warning: minute: */7 does not divide 60 evenly; \
+             runs at :00 :07 … :56, then :00 again (4-minute gap)\n",
+        );
+}
+
+#[test]
+fn invalid_schedule_is_a_usage_error() {
+    cronsim()
+        .args(["next", "61 * * * *"])
+        .assert()
+        .code(2)
+        .stdout("")
+        .stderr(predicate::str::contains(
+            "invalid value '61 * * * *' for '<SCHEDULE>': minute: 61 is out of range 0-59",
+        ));
+    cronsim()
+        .args(["add", "j", "-s", "every 15m", "--", "ls"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("expected 5 fields"));
 }
 
 #[test]
