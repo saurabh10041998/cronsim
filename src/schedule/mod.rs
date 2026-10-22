@@ -40,7 +40,6 @@ impl Schedule {
         describe::describe(self)
     }
 
-    /// Things that are valid cron but probably not what the user meant.
     pub fn warnings(&self) -> Vec<String> {
         self.never_fires()
             .into_iter()
@@ -50,9 +49,6 @@ impl Schedule {
 
     fn never_fires(&self) -> Option<String> {
         let [_, _, dom, month, dow] = &self.fields;
-        // A day of month starting with `*` always includes day 1. If day of
-        // week is restricted too, cron fires when either matches, and every
-        // weekday occurs in every month.
         if dom.is_star() || !dow.is_star() {
             return None;
         }
@@ -79,8 +75,6 @@ impl Schedule {
     }
 }
 
-/// `*/S` restarts at the top of each cycle, so when S does not divide the
-/// cycle the last gap is shorter: `*/7` runs at :56 and then at :00.
 fn uneven_step(field: &Field) -> Option<String> {
     let kind = field.kind();
     if kind == FieldKind::DayOfMonth {
