@@ -70,7 +70,7 @@ pub enum Command {
     },
     /// Show the next fire times of a schedule without scheduling anything
     Next {
-        /// Cron expression, e.g. "*/15 * * * *" or "@daily"
+        /// Cron expression, @alias, or e.g. "every 15m", "daily at 02:30", "mon,thu at 18:15"
         schedule: Schedule,
         /// Number of fire times to show
         #[arg(
@@ -96,7 +96,7 @@ pub enum Command {
 pub struct AddArgs {
     #[arg(value_parser = parse_job_name)]
     pub name: String,
-    /// Cron expression, e.g. "*/15 * * * *" or "@daily"
+    /// Cron expression, @alias, or e.g. "every 15m", "daily at 02:30", "mon,thu at 18:15"
     #[arg(short, long)]
     pub schedule: Schedule,
     /// Script to run
@@ -144,7 +144,7 @@ mod tests {
             "add",
             "backup",
             "-s",
-            "*/15 * * * *",
+            "every 15m",
             "--",
             "tar",
             "-czf",
@@ -156,6 +156,7 @@ mod tests {
         };
         assert_eq!(add.name, "backup");
         assert_eq!(add.schedule.to_string(), "*/15 * * * *");
+        assert_eq!(add.schedule.source(), "every 15m");
         assert_eq!(add.cmd, ["tar", "-czf", "b.tgz"]);
         assert!(add.script.is_none());
     }
@@ -166,7 +167,7 @@ mod tests {
             "add",
             "report",
             "--schedule",
-            "30 2 * * *",
+            "daily at 02:30",
             "--script",
             "./r.sh",
         ])
@@ -174,6 +175,7 @@ mod tests {
         let Command::Add(add) = cli.command else {
             panic!("expected add");
         };
+        assert_eq!(add.schedule.to_string(), "30 2 * * *");
         assert_eq!(add.script, Some(PathBuf::from("./r.sh")));
         assert!(add.cmd.is_empty());
     }
@@ -249,7 +251,7 @@ mod tests {
     fn invalid_schedule_is_rejected_by_cli() {
         for args in [
             &["next", "61 * * * *"][..],
-            &["next", "every 15m"],
+            &["next", "every 7m"],
             &["add", "j", "-s", "@reboot", "--", "ls"],
         ] {
             let err = parse(args).unwrap_err();

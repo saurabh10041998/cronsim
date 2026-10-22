@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt;
 
 use super::field::FieldKind;
+use super::human::HumanError;
 
 /// Why a schedule was rejected.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,6 +13,7 @@ pub enum ScheduleError {
     SecondsField,
     Reboot,
     UnknownAlias(String),
+    Human(HumanError),
     Field {
         kind: FieldKind,
         error: FieldError,
@@ -63,6 +65,7 @@ impl fmt::Display for ScheduleError {
                 "unknown alias '{alias}'; expected one of @hourly, @daily, @midnight, \
                  @weekly, @monthly, @yearly, @annually"
             ),
+            Self::Human(error) => error.fmt(f),
             Self::Field { kind, error } => write!(f, "{}: {error}", kind.name()),
         }
     }

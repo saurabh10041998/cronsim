@@ -104,10 +104,49 @@ fn invalid_schedule_is_a_usage_error() {
             "invalid value '61 * * * *' for '<SCHEDULE>': minute: 61 is out of range 0-59",
         ));
     cronsim()
-        .args(["add", "j", "-s", "every 15m", "--", "ls"])
+        .args(["add", "j", "-s", "every 7m", "--", "ls"])
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("expected 5 fields"));
+        .stderr(predicate::str::contains(
+            "7 doesn't divide 60, so cron can't run it evenly",
+        ));
+}
+
+#[test]
+fn human_schedule_shows_cron_and_meaning() {
+    cronsim()
+        .args(["next", "every 15m"])
+        .assert()
+        .success()
+        .stdout(
+            "next: schedule=\"*/15 * * * *\" (from \"every 15m\") count=5\n\
+             meaning: Every 15th minute\n",
+        )
+        .stderr("");
+    cronsim()
+        .args([
+            "add",
+            "report",
+            "-s",
+            "weekdays at 9:00",
+            "--script",
+            "./r.sh",
+        ])
+        .assert()
+        .success()
+        .stdout(
+            "add: name=\"report\" schedule=\"0 9 * * 1-5\" (from \"weekdays at 9:00\") \
+             script=\"./r.sh\"\n\
+             meaning: At 09:00, Monday through Friday\n",
+        );
+    cronsim()
+        .args(["next", "mon,thu at 18:15"])
+        .assert()
+        .success()
+        .stdout(
+            "next: schedule=\"15 18 * * 1,4\" (from \"mon,thu at 18:15\") count=5\n\
+             meaning: At 18:15, on Monday and Thursday\n",
+        );
 }
 
 #[test]
