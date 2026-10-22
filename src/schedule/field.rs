@@ -1,9 +1,5 @@
+use super::calendar;
 use super::error::FieldError;
-
-const MONTH_NAMES: [&str; 12] = [
-    "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
-];
-const WEEKDAY_NAMES: [&str; 7] = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldKind {
@@ -59,11 +55,11 @@ impl FieldKind {
         }
     }
 
-    fn names(self) -> &'static [&'static str] {
+    fn parse_name(self, token: &str) -> Option<u8> {
         match self {
-            Self::Month => &MONTH_NAMES,
-            Self::DayOfWeek => &WEEKDAY_NAMES,
-            _ => &[],
+            Self::Month => calendar::parse_month(token),
+            Self::DayOfWeek => calendar::parse_weekday(token),
+            _ => None,
         }
     }
 }
@@ -192,12 +188,8 @@ fn parse_value(kind: FieldKind, token: &str, item: &str) -> Result<u8, FieldErro
             }),
         };
     }
-    if let Some(i) = kind
-        .names()
-        .iter()
-        .position(|name| name.eq_ignore_ascii_case(token))
-    {
-        return Ok(i as u8 + kind.min());
+    if let Some(value) = kind.parse_name(token) {
+        return Ok(value);
     }
     if is_quartz(token) {
         return Err(FieldError::Unsupported(token.to_string()));

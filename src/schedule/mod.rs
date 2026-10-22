@@ -1,6 +1,7 @@
 //! Standard 5-field cron schedules: parsing, validation, warnings and the
 //! plain-English meaning. Nothing here schedules anything.
 
+mod calendar;
 mod describe;
 mod error;
 mod field;
@@ -20,9 +21,6 @@ const ALIASES: [(&str, &str); 7] = [
     ("@yearly", "0 0 1 1 *"),
     ("@annually", "0 0 1 1 *"),
 ];
-
-/// Longest length of each month, so February has 29 days.
-const MONTH_DAYS: [u8; 12] = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 /// A validated cron schedule. `Display` prints the normalised 5-field form:
 /// aliases expanded and whitespace collapsed.
@@ -62,7 +60,7 @@ impl Schedule {
         let months: Vec<u8> = month.values().collect();
         let fires = months
             .iter()
-            .any(|&m| days.iter().any(|&d| d <= MONTH_DAYS[usize::from(m) - 1]));
+            .any(|&m| days.iter().any(|&d| d <= calendar::max_days(m)));
         if fires {
             return None;
         }
@@ -72,10 +70,7 @@ impl Schedule {
             ("days", "occur")
         };
         let days: Vec<String> = days.iter().map(u8::to_string).collect();
-        let months: Vec<String> = months
-            .iter()
-            .map(|&m| describe::value_name(FieldKind::Month, m))
-            .collect();
+        let months: Vec<String> = months.iter().map(|&m| calendar::month_name(m)).collect();
         Some(format!(
             "this schedule never fires: {day_word} {} never {verb} in {}",
             describe::join(&days),

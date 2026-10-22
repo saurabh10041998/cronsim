@@ -3,34 +3,9 @@
 //! The sentence is a time part (minute + hour), then a day part (day of
 //! month, month, day of week).
 
-use super::Schedule;
 use super::field::{Field, FieldKind, Item};
+use super::{Schedule, calendar};
 
-const MONTHS: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-];
-const WEEKDAYS: [&str; 7] = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-];
-
-/// Above this many clock times, `At 09:00, 10:00, …` is spelled per field instead.
 const MAX_CLOCK_TIMES: usize = 4;
 
 pub(super) fn describe(schedule: &Schedule) -> String {
@@ -43,7 +18,6 @@ pub(super) fn describe(schedule: &Schedule) -> String {
     }
 }
 
-/// The text, and whether it names exact clock times (`At 02:30`).
 fn time_part(minute: &Field, hour: &Field) -> (String, bool) {
     if let (Some(minutes), Some(hours)) = (plain_values(minute), plain_values(hour))
         && minutes.len() * hours.len() <= MAX_CLOCK_TIMES
@@ -163,8 +137,8 @@ fn list(kind: FieldKind, items: &[Item]) -> String {
 
 pub(super) fn value_name(kind: FieldKind, value: u8) -> String {
     match kind {
-        FieldKind::Month => MONTHS[usize::from(value) - 1].to_string(),
-        FieldKind::DayOfWeek => WEEKDAYS[usize::from(value % 7)].to_string(),
+        FieldKind::Month => calendar::month_name(value),
+        FieldKind::DayOfWeek => calendar::weekday_name(value),
         _ => value.to_string(),
     }
 }
