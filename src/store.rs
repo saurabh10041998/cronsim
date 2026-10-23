@@ -1,5 +1,3 @@
-//! The data root: job specs, run history, logs and locks.
-
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
@@ -20,7 +18,6 @@ pub struct Store {
     root: PathBuf,
 }
 
-/// Held for the duration of a run; released on drop.
 #[derive(Debug)]
 pub struct JobLock {
     _file: File,
@@ -186,19 +183,18 @@ impl Store {
     }
 }
 
-/// `$CRONSIM_HOME`, else `$XDG_DATA_HOME/cronsim`, else `~/.local/share/cronsim`.
-fn resolve_root(var: impl Fn(&str) -> Option<OsString>) -> Result<PathBuf, StoreError> {
-    let var = |key| var(key).filter(|value| !value.is_empty());
-    if let Some(home) = var("CRONSIM_HOME") {
+fn resolve_root(lookup: impl Fn(&str) -> Option<OsString>) -> Result<PathBuf, StoreError> {
+    let non_empty = |key| lookup(key).filter(|value| !value.is_empty());
+    if let Some(home) = non_empty("CRONSIM_HOME") {
         return Ok(home.into());
     }
-    if let Some(data) = var("XDG_DATA_HOME")
+    if let Some(data) = non_empty("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
     {
         return Ok(data.join("cronsim"));
     }
-    var("HOME")
+    non_empty("HOME")
         .map(|home| PathBuf::from(home).join(".local/share/cronsim"))
         .ok_or(StoreError::NoHome)
 }

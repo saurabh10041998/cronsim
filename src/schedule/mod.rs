@@ -25,8 +25,6 @@ const ALIASES: [(&str, &str); 7] = [
     ("@annually", "0 0 1 1 *"),
 ];
 
-/// A validated cron schedule. `Display` prints the normalised 5-field form:
-/// aliases expanded and whitespace collapsed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(try_from = "Stored", into = "Stored")]
 pub struct Schedule {
@@ -34,8 +32,6 @@ pub struct Schedule {
     fields: [Field; 5],
 }
 
-/// On-disk form. `cron` is authoritative: it is what goes in the crontab, and
-/// the source may not re-parse to the same expression later (time zones).
 #[derive(Serialize, Deserialize)]
 struct Stored {
     source: String,
