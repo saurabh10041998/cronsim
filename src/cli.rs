@@ -2,9 +2,8 @@ use std::path::PathBuf;
 
 use clap::{ArgGroup, Args, Parser, Subcommand};
 
+use crate::job;
 use crate::schedule::Schedule;
-
-const MAX_JOB_NAME_LEN: usize = 64;
 
 #[derive(Debug, Parser)]
 #[command(name = "cronsim", version, about = "Simplified cron scheduling")]
@@ -107,20 +106,8 @@ pub struct AddArgs {
     pub cmd: Vec<String>,
 }
 
-/// Job names become file names and crontab tags, so keep them to a safe charset.
 fn parse_job_name(s: &str) -> Result<String, String> {
-    if s.is_empty() || s.len() > MAX_JOB_NAME_LEN {
-        return Err(format!(
-            "job name must be 1-{MAX_JOB_NAME_LEN} characters long"
-        ));
-    }
-    if !s
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-    {
-        return Err("job name may only contain A-Z, a-z, 0-9, '-' and '_'".to_string());
-    }
-    Ok(s.to_string())
+    job::validate_name(s).map(|()| s.to_string())
 }
 
 #[cfg(test)]
@@ -235,16 +222,6 @@ mod tests {
             parse(&["frobnicate"]).unwrap_err().kind(),
             ErrorKind::InvalidSubcommand
         );
-    }
-
-    #[test]
-    fn job_name_validation() {
-        for ok in ["a", "nightly-backup", "job_2", &"x".repeat(64)] {
-            assert_eq!(parse_job_name(ok).as_deref(), Ok(ok));
-        }
-        for bad in ["", &"x".repeat(65), "a/b", "a.b", "a b", "jöb", ".."] {
-            assert!(parse_job_name(bad).is_err(), "{bad:?} should be rejected");
-        }
     }
 
     #[test]

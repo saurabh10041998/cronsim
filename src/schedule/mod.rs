@@ -10,6 +10,8 @@ mod human;
 use std::fmt;
 use std::str::FromStr;
 
+use serde::{Deserialize, Serialize};
+
 pub use error::ScheduleError;
 use field::{Field, FieldKind, Item};
 
@@ -23,12 +25,42 @@ const ALIASES: [(&str, &str); 7] = [
     ("@annually", "0 0 1 1 *"),
 ];
 
-/// A validated cron schedule. `Display` prints the normalised 5-field form:
-/// aliases expanded and whitespace collapsed.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "Stored", into = "Stored")]
 pub struct Schedule {
     source: String,
     fields: [Field; 5],
+}
+
+#[derive(Serialize, Deserialize)]
+struct Stored {
+    source: String,
+    cron: String,
+}
+
+impl TryFrom<Stored> for Schedule {
+    type Error = ScheduleError;
+
+    fn try_from(stored: Stored) -> Result<Self, Self::Error> {
+        let mut schedule: Schedule = stored.cron.parse()?;
+        schedule.source = stored.source.trim().to_string();
+        Ok(schedule)
+    }
+}
+
+impl From<Schedule> for Stored {
+    fn from(schedule: Schedule) -> Self {
+        Stored {
+            cron: schedule.to_string(),
+            source: schedule.source,
+        }
+    }
+}
+
+impl PartialEq for Schedule {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source && self.to_string() == other.to_string()
+    }
 }
 
 impl Schedule {

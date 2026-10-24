@@ -1,12 +1,9 @@
-mod cli;
-mod schedule;
-
 use std::process::ExitCode;
 
 use clap::Parser;
 
-use cli::{AddArgs, Cli, Command};
-use schedule::Schedule;
+use cronsim::cli::{AddArgs, Cli, Command};
+use cronsim::schedule::Schedule;
 
 fn main() -> ExitCode {
     dispatch(Cli::parse());
