@@ -12,6 +12,7 @@ pub enum ScheduleError {
     /// Six fields, which usually means a leading seconds field (Quartz, Spring, …).
     SecondsField,
     Reboot,
+    CronTz,
     UnknownAlias(String),
     Human(HumanError),
     Field {
@@ -51,6 +52,10 @@ impl fmt::Display for ScheduleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Empty => f.write_str("schedule is empty"),
+            Self::FieldCount(7) => f.write_str(
+                "expected 5 fields, found 7; this looks like Quartz (seconds and year), \
+                 but cron's smallest unit is one minute and it has no year field",
+            ),
             Self::FieldCount(n) => write!(
                 f,
                 "expected 5 fields (minute hour day-of-month month day-of-week), found {n}"
@@ -60,6 +65,9 @@ impl fmt::Display for ScheduleError {
                  but cron's smallest unit is one minute",
             ),
             Self::Reboot => f.write_str("@reboot is not a time-based schedule"),
+            Self::CronTz => f.write_str(
+                "CRON_TZ is not supported; schedules run in the system's local time zone",
+            ),
             Self::UnknownAlias(alias) => write!(
                 f,
                 "unknown alias '{alias}'; expected one of @hourly, @daily, @midnight, \

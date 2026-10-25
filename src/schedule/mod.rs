@@ -6,6 +6,7 @@ mod describe;
 mod error;
 mod field;
 mod human;
+mod next;
 
 use std::fmt;
 use std::str::FromStr;
@@ -152,6 +153,13 @@ impl FromStr for Schedule {
         if source.is_empty() {
             return Err(ScheduleError::Empty);
         }
+        if ["CRON_TZ=", "TZ="].iter().any(|prefix| {
+            source
+                .get(..prefix.len())
+                .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
+        }) {
+            return Err(ScheduleError::CronTz);
+        }
         let expr = if source.starts_with('@') {
             if source.eq_ignore_ascii_case("@reboot") {
                 return Err(ScheduleError::Reboot);
@@ -247,6 +255,9 @@ mod tests {
             ),
             ("0 0 1 1 * 2030 x", ScheduleError::FieldCount(7)),
             ("0 */5 * * * *", ScheduleError::SecondsField),
+            ("0 0 12 * * ? 2030", ScheduleError::FieldCount(7)),
+            ("CRON_TZ=UTC 0 0 * * *", ScheduleError::CronTz),
+            ("tz=Asia/Kolkata 0 0 * * *", ScheduleError::CronTz),
             ("@reboot", ScheduleError::Reboot),
             ("@often", ScheduleError::UnknownAlias("@often".into())),
             (
@@ -289,6 +300,15 @@ mod tests {
     fn error_messages() {
         for (input, message) in [
             ("61 * * * *", "minute: 61 is out of range 0-59"),
+            (
+                "0 0 12 * * ? 2030",
+                "expected 5 fields, found 7; this looks like Quartz (seconds and year), \
+                 but cron's smallest unit is one minute and it has no year field",
+            ),
+            (
+                "CRON_TZ=UTC 0 0 * * *",
+                "CRON_TZ is not supported; schedules run in the system's local time zone",
+            ),
             (
                 "5/15 * * * *",
                 "minute: '5/15' is not portable across cron implementations; write '5-59/15'",
