@@ -157,7 +157,7 @@ impl Store {
             .map_err(|e| io_error(&path, e))
     }
 
-    fn job_path(&self, name: &str) -> PathBuf {
+    pub fn job_path(&self, name: &str) -> PathBuf {
         self.root.join(JOBS).join(format!("{name}.toml"))
     }
 

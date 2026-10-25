@@ -1,8 +1,11 @@
+use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::{ArgGroup, Args, Parser, Subcommand};
 
-use crate::job;
+use crate::add;
+use crate::job::{self, OverlapPolicy};
 use crate::schedule::Schedule;
 
 #[derive(Debug, Parser)]
@@ -98,20 +101,117 @@ pub struct AddArgs {
     /// Cron expression, @alias, or e.g. "every 15m", "daily at 02:30", "mon,thu at 18:15"
     #[arg(short, long)]
     pub schedule: Schedule,
-    /// Script to run
-    #[arg(long, group = "target", value_name = "PATH")]
+    /// Script to run (must be executable)
+    #[arg(long, group = "target", value_name = "PATH", value_parser = parse_script)]
     pub script: Option<PathBuf>,
     /// Command and arguments to run, given after `--`
     #[arg(last = true, group = "target", value_name = "CMD")]
     pub cmd: Vec<String>,
+    /// Kill the job after this long (e.g. 90s, 30m, 1h, 2d); 0 = no timeout
+    #[arg(long, value_name = "DUR", default_value = "1h", value_parser = parse_duration)]
+    pub timeout: Duration,
+    /// What to do when the previous run is still going
+    #[arg(long, value_name = "POLICY", default_value = "skip")]
+    pub overlap: OverlapPolicy,
+    /// Set a variable for the job (repeatable)
+    #[arg(long = "env", value_name = "KEY=VAL", value_parser = parse_env)]
+    pub env: Vec<(String, String)>,
+    /// Copy these variables from the current shell (comma-separated; "" for none)
+    #[arg(long, value_name = "NAMES", default_value = "PATH", value_parser = parse_env_names)]
+    pub capture_env: EnvNames,
+    /// Directory to run in [default: the home directory, as cron does].
+    /// Relative paths in the command's arguments are resolved from here
+    #[arg(long, value_name = "DIR", value_parser = parse_workdir)]
+    pub workdir: Option<PathBuf>,
+    /// Number of runs and logs to keep
+    #[arg(long, value_name = "N", default_value_t = job::DEFAULT_KEEP_RUNS as u32,
+          value_parser = clap::value_parser!(u32).range(1..))]
+    pub keep_runs: u32,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvNames(pub Vec<String>);
 
 fn parse_job_name(s: &str) -> Result<String, String> {
     job::validate_name(s).map(|()| s.to_string())
 }
 
+fn parse_duration(s: &str) -> Result<Duration, String> {
+    if s == "0" {
+        return Ok(Duration::ZERO);
+    }
+    let bad = || format!("expected 0 or a number with s, m, h or d (e.g. 90s, 30m, 1h), got '{s}'");
+    let digits = s.bytes().take_while(u8::is_ascii_digit).count();
+    let (n, unit) = s.split_at(digits);
+    let n: u64 = n.parse().map_err(|_| bad())?;
+    let scale = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86400,
+        _ => return Err(bad()),
+    };
+    n.checked_mul(scale)
+        .map(Duration::from_secs)
+        .ok_or_else(|| format!("'{s}' is too long"))
+}
+
+fn check_env_key(key: &str) -> Result<(), String> {
+    let mut bytes = key.bytes();
+    let valid = bytes
+        .next()
+        .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_');
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "'{key}' is not a valid variable name (letters, digits and '_', not starting with a digit)"
+        ))
+    }
+}
+
+fn parse_env(s: &str) -> Result<(String, String), String> {
+    let (key, value) = s
+        .split_once('=')
+        .ok_or_else(|| format!("expected KEY=VAL, got '{s}'"))?;
+    check_env_key(key)?;
+    Ok((key.to_string(), value.to_string()))
+}
+
+fn parse_env_names(s: &str) -> Result<EnvNames, String> {
+    if s.is_empty() {
+        return Ok(EnvNames(Vec::new()));
+    }
+    s.split(',')
+        .map(|name| check_env_key(name).map(|()| name.to_string()))
+        .collect::<Result<_, _>>()
+        .map(EnvNames)
+}
+
+fn parse_script(s: &str) -> Result<PathBuf, String> {
+    let path = fs::canonicalize(s).map_err(|e| e.to_string())?;
+    if !path.is_file() {
+        return Err("not a regular file".to_string());
+    }
+    if !add::is_executable(&path) {
+        return Err(format!("not executable; run 'chmod +x {s}'"));
+    }
+    Ok(path)
+}
+
+fn parse_workdir(s: &str) -> Result<PathBuf, String> {
+    let path = fs::canonicalize(s).map_err(|e| e.to_string())?;
+    if !path.is_dir() {
+        return Err("not a directory".to_string());
+    }
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
     use super::*;
     use clap::CommandFactory;
     use clap::error::ErrorKind;
@@ -150,21 +250,112 @@ mod tests {
 
     #[test]
     fn add_with_script() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let script = dir.path().join("r.sh");
+        fs::write(&script, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let link = dir.path().join("link.sh");
+        std::os::unix::fs::symlink(&script, &link).unwrap();
+
         let cli = parse(&[
             "add",
             "report",
             "--schedule",
             "daily at 02:30",
             "--script",
-            "./r.sh",
+            link.to_str().unwrap(),
         ])
         .unwrap();
         let Command::Add(add) = cli.command else {
             panic!("expected add");
         };
         assert_eq!(add.schedule.to_string(), "30 2 * * *");
-        assert_eq!(add.script, Some(PathBuf::from("./r.sh")));
+        assert_eq!(add.script, Some(fs::canonicalize(&script).unwrap()));
         assert!(add.cmd.is_empty());
+
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o644)).unwrap();
+        let script = script.to_str().unwrap();
+        for (path, message) in [
+            (script, "not executable; run 'chmod +x "),
+            (dir.path().to_str().unwrap(), "not a regular file"),
+            ("/no/such/file", "No such file or directory"),
+        ] {
+            let err = parse(&["add", "j", "-s", "@daily", "--script", path]).unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::ValueValidation, "{path}");
+            assert!(err.to_string().contains(message), "{err}");
+        }
+    }
+
+    #[test]
+    fn add_option_defaults() {
+        let Command::Add(add) = parse(&["add", "j", "-s", "@daily", "--", "ls"])
+            .unwrap()
+            .command
+        else {
+            panic!("expected add");
+        };
+        assert_eq!(add.timeout, Duration::from_secs(3600));
+        assert_eq!(add.overlap, OverlapPolicy::Skip);
+        assert_eq!(add.capture_env, EnvNames(vec!["PATH".into()]));
+        assert!(add.env.is_empty());
+        assert_eq!(add.workdir, None);
+        assert_eq!(add.keep_runs, 50);
+    }
+
+    #[test]
+    fn durations() {
+        for (input, secs) in [
+            ("0", 0),
+            ("90s", 90),
+            ("30m", 1800),
+            ("1h", 3600),
+            ("2d", 172800),
+        ] {
+            assert_eq!(
+                parse_duration(input),
+                Ok(Duration::from_secs(secs)),
+                "{input}"
+            );
+        }
+        for bad in ["", "5", "1h30m", "-5m", "5x", "h", "99999999999999999999d"] {
+            assert!(parse_duration(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn env_values_and_names() {
+        assert_eq!(parse_env("A=b"), Ok(("A".into(), "b".into())));
+        assert_eq!(parse_env("_X1="), Ok(("_X1".into(), "".into())));
+        assert_eq!(parse_env("A=b=c"), Ok(("A".into(), "b=c".into())));
+        for bad in ["=x", "1A=x", "NOEQUALS", "A-B=x"] {
+            assert!(parse_env(bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(
+            parse_env_names("PATH,HOME"),
+            Ok(EnvNames(vec!["PATH".into(), "HOME".into()]))
+        );
+        assert_eq!(parse_env_names(""), Ok(EnvNames(vec![])));
+        for bad in ["PATH,,HOME", "A-B", ","] {
+            assert!(parse_env_names(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn add_rejects_bad_option_values() {
+        for args in [
+            &["--overlap", "never"][..],
+            &["--keep-runs", "0"],
+            &["--workdir", "/no/such/dir"],
+            &["--workdir", "/etc/passwd"],
+        ] {
+            let argv = ["add", "j", "-s", "@daily"]
+                .iter()
+                .chain(args)
+                .chain(&["--", "ls"])
+                .copied()
+                .collect::<Vec<_>>();
+            assert!(parse(&argv).is_err(), "{args:?}");
+        }
     }
 
     #[test]
@@ -172,7 +363,10 @@ mod tests {
         let err = parse(&["add", "j", "-s", "@daily"]).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
 
-        let err = parse(&["add", "j", "-s", "@daily", "--script", "a.sh", "--", "ls"]).unwrap_err();
+        let err = parse(&[
+            "add", "j", "-s", "@daily", "--script", "/bin/sh", "--", "ls",
+        ])
+        .unwrap_err();
         assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
     }
 
