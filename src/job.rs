@@ -9,6 +9,8 @@ use crate::schedule::Schedule;
 pub const MAX_NAME_LEN: usize = 64;
 pub const FORMAT_VERSION: u32 = 1;
 pub const DEFAULT_KEEP_RUNS: usize = 50;
+/// The `PATH` cron gives a job when it sets none.
+pub const CRON_PATH: &str = "/usr/bin:/bin";
 
 /// Job names become file names and crontab tags, so keep them to a safe charset.
 pub fn validate_name(s: &str) -> Result<(), String> {
@@ -78,7 +80,7 @@ pub enum Command {
     Script { path: PathBuf },
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum OverlapPolicy {
     #[default]

@@ -1,3 +1,4 @@
+pub mod add;
 pub mod cli;
 pub mod history;
 pub mod job;

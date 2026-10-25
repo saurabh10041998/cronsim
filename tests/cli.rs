@@ -1,64 +1,171 @@
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+
 use assert_cmd::Command;
 use predicates::prelude::*;
+use tempfile::TempDir;
 
+/// `CRONSIM_HOME` points somewhere that can't be created, so a command that
+/// touches the store by mistake fails instead of writing to the real home.
 fn cronsim() -> Command {
     let mut cmd = Command::cargo_bin("cronsim").unwrap();
-    cmd.env("TZ", "UTC");
+    cmd.env("TZ", "UTC")
+        .env("CRONSIM_HOME", "/dev/null/cronsim");
     cmd
 }
 
+fn cronsim_in(home: &TempDir) -> Command {
+    let mut cmd = cronsim();
+    cmd.env("CRONSIM_HOME", home.path());
+    cmd
+}
+
+fn script(dir: &Path, name: &str, mode: u32) -> PathBuf {
+    let path = dir.join(name);
+    fs::write(&path, "#!/bin/sh\necho hi\n").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+    path
+}
+
+const NEXT_RUN: &str = r"  next run: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \+00:00";
+
 #[test]
-fn add_command_prints_parameters() {
-    cronsim()
+fn add_command_saves_job() {
+    let home = TempDir::new().unwrap();
+    let job = home.path().join("jobs/backup.toml");
+    cronsim_in(&home)
+        .env("PATH", "/usr/bin:/bin")
         .args([
             "add",
             "backup",
             "-s",
             "*/15 * * * *",
             "--",
-            "tar",
-            "czf",
-            "/tmp/b.tgz",
+            "ls",
+            "-l",
+            "/tmp/a b",
         ])
         .assert()
         .success()
         .stdout(
-            r#"add: name="backup" schedule="*/15 * * * *" command=["tar", "czf", "/tmp/b.tgz"]
-meaning: Every 15th minute
-"#,
+            predicate::str::is_match(format!(
+                r"^added: backup
+  schedule: \*/15 \* \* \* \*
+  meaning:  Every 15th minute
+  command:  ls -l '/tmp/a b'
+{NEXT_RUN}
+  saved:    {}
+note: the job is saved but not in your crontab yet, so cron won't run it
+$",
+                regex_escape(&job.display().to_string())
+            ))
+            .unwrap(),
         )
         .stderr("");
+    let text = fs::read_to_string(&job).unwrap();
+    assert!(text.contains("program = \"ls\""), "{text}");
+    assert!(text.contains(r#"args = ["-l", "/tmp/a b"]"#), "{text}");
+    assert!(text.contains("PATH = \"/usr/bin:/bin\""), "{text}");
+    assert!(text.contains("timeout = 3600"), "{text}");
+}
+
+fn regex_escape(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| {
+            let special = "\\.+*?()|[]{}^$".contains(c);
+            special.then_some('\\').into_iter().chain([c])
+        })
+        .collect()
 }
 
 #[test]
-fn add_script_prints_raw_path() {
-    cronsim()
+fn add_script_stores_canonical_path() {
+    let home = TempDir::new().unwrap();
+    let real = script(home.path(), "report.sh", 0o755);
+    std::os::unix::fs::symlink(&real, home.path().join("link.sh")).unwrap();
+    cronsim_in(&home)
+        .current_dir(home.path())
+        .args(["add", "report", "-s", "30 2 * * *", "--script", "./link.sh"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "  command:  {}\n",
+            fs::canonicalize(&real).unwrap().display()
+        )));
+    let text = fs::read_to_string(home.path().join("jobs/report.toml")).unwrap();
+    assert!(text.contains("kind = \"script\""), "{text}");
+}
+
+#[test]
+fn add_rejects_bad_scripts() {
+    let home = TempDir::new().unwrap();
+    let plain = script(home.path(), "plain.sh", 0o644);
+    for (path, message) in [
+        (plain.to_str().unwrap(), "not executable; run 'chmod +x "),
+        (home.path().to_str().unwrap(), "not a regular file"),
+        ("/no/such/script.sh", "No such file or directory"),
+    ] {
+        cronsim_in(&home)
+            .args(["add", "j", "-s", "@daily", "--script", path])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(message));
+    }
+    assert!(!home.path().join("jobs/j.toml").exists());
+}
+
+#[test]
+fn add_refuses_existing_job() {
+    let home = TempDir::new().unwrap();
+    let add = || {
+        let mut cmd = cronsim_in(&home);
+        cmd.args(["add", "backup", "-s", "@daily", "--", "ls"]);
+        cmd
+    };
+    add().assert().success();
+    add().assert().code(1).stdout("").stderr(
+        predicate::str::contains("error: job 'backup' already exists (")
+            .and(predicate::str::contains("jobs/backup.toml)")),
+    );
+}
+
+#[test]
+fn add_shows_typed_schedule_and_warnings() {
+    let home = TempDir::new().unwrap();
+    cronsim_in(&home)
+        .env("PATH", "/usr/bin:/bin")
         .args([
             "add",
-            "report",
+            "backup",
             "-s",
-            "30 2 * * *",
-            "--script",
-            "./report.sh",
+            "@daily",
+            "--capture-env",
+            "PATH,NOT_SET_XYZ",
+            "--",
+            "no-such-program-xyz",
         ])
         .assert()
         .success()
-        .stdout(
-            "add: name=\"report\" schedule=\"30 2 * * *\" script=\"./report.sh\"\n\
-             meaning: At 02:30, every day\n",
+        .stdout(predicate::str::starts_with(
+            "added: backup\n  schedule: 0 0 * * * (from \"@daily\")\n  meaning:  At 00:00, every day\n",
+        ))
+        .stderr(
+            "warning: --capture-env: NOT_SET_XYZ is not set; skipped\n\
+             warning: 'no-such-program-xyz' is not on the job's PATH (/usr/bin:/bin); \
+             it will fail under cron\n",
         );
 }
 
 #[test]
-fn alias_shows_normalised_and_typed_schedule() {
+fn add_never_touches_store_on_usage_error() {
     cronsim()
-        .args(["add", "backup", "-s", "@daily", "--", "./backup.sh"])
+        .args(["add", "j", "-s", "@daily", "--timeout", "1h30m", "--", "ls"])
         .assert()
-        .success()
-        .stdout(
-            "add: name=\"backup\" schedule=\"0 0 * * *\" (from \"@daily\") command=[\"./backup.sh\"]\n\
-             meaning: At 00:00, every day\n",
-        );
+        .code(2)
+        .stderr(predicate::str::contains(
+            "invalid value '1h30m' for '--timeout <DUR>'",
+        ));
 }
 
 #[test]
@@ -165,22 +272,23 @@ fn human_schedule_shows_cron_and_meaning() {
              meaning: Every 15th minute\n",
         ))
         .stderr("");
-    cronsim()
+    let home = TempDir::new().unwrap();
+    let r = script(home.path(), "r.sh", 0o755);
+    cronsim_in(&home)
         .args([
             "add",
             "report",
             "-s",
             "weekdays at 9:00",
             "--script",
-            "./r.sh",
+            r.to_str().unwrap(),
         ])
         .assert()
         .success()
-        .stdout(
-            "add: name=\"report\" schedule=\"0 9 * * 1-5\" (from \"weekdays at 9:00\") \
-             script=\"./r.sh\"\n\
-             meaning: At 09:00, Monday through Friday\n",
-        );
+        .stdout(predicate::str::starts_with(
+            "added: report\n  schedule: 0 9 * * 1-5 (from \"weekdays at 9:00\")\n  \
+             meaning:  At 09:00, Monday through Friday\n",
+        ));
     cronsim()
         .args(["next", "mon,thu at 18:15"])
         .assert()
