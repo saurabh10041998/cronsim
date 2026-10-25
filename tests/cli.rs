@@ -2,7 +2,9 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn cronsim() -> Command {
-    Command::cargo_bin("cronsim").unwrap()
+    let mut cmd = Command::cargo_bin("cronsim").unwrap();
+    cmd.env("TZ", "UTC");
+    cmd
 }
 
 #[test]
@@ -75,9 +77,47 @@ fn next_uses_default_count() {
         .assert()
         .success()
         .stdout(
-            "next: schedule=\"30 2 * * 1-5\" count=5\n\
-             meaning: At 02:30, Monday through Friday\n",
+            predicate::str::is_match(
+                r"^next: schedule=.30 2 \* \* 1-5. count=5
+meaning: At 02:30, Monday through Friday
+time zone: UTC \(system local\)
+(  (Mon|Tue|Wed|Thu|Fri) \d{4}-\d{2}-\d{2} 02:30 \+00:00\n){5}$",
+            )
+            .unwrap(),
         );
+}
+
+#[test]
+fn next_count_limits_fire_times() {
+    cronsim()
+        .args(["next", "-n", "3", "@hourly"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::is_match(r"\n(  \w{3} \d{4}-\d{2}-\d{2} \d{2}:00 \+00:00\n){3}$")
+                .unwrap(),
+        );
+}
+
+#[test]
+fn next_never_fires() {
+    cronsim()
+        .args(["next", "0 0 30 2 *"])
+        .assert()
+        .success()
+        .stdout(predicate::str::ends_with("(never fires)\n"))
+        .stderr("warning: this schedule never fires: day 30 never occurs in February\n");
+}
+
+#[test]
+fn cron_tz_is_rejected() {
+    cronsim()
+        .args(["next", "CRON_TZ=UTC 0 0 * * *"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "CRON_TZ is not supported; schedules run in the system's local time zone",
+        ));
 }
 
 #[test]
@@ -86,7 +126,9 @@ fn warnings_go_to_stderr() {
         .args(["next", "*/7 * * * *"])
         .assert()
         .success()
-        .stdout("next: schedule=\"*/7 * * * *\" count=5\nmeaning: Every 7th minute\n")
+        .stdout(predicate::str::starts_with(
+            "next: schedule=\"*/7 * * * *\" count=5\nmeaning: Every 7th minute\n",
+        ))
         .stderr(
             "warning: minute: */7 does not divide 60 evenly; \
              runs at :00 :07 … :56, then :00 again (4-minute gap)\n",
@@ -118,10 +160,10 @@ fn human_schedule_shows_cron_and_meaning() {
         .args(["next", "every 15m"])
         .assert()
         .success()
-        .stdout(
+        .stdout(predicate::str::starts_with(
             "next: schedule=\"*/15 * * * *\" (from \"every 15m\") count=5\n\
              meaning: Every 15th minute\n",
-        )
+        ))
         .stderr("");
     cronsim()
         .args([
@@ -143,10 +185,10 @@ fn human_schedule_shows_cron_and_meaning() {
         .args(["next", "mon,thu at 18:15"])
         .assert()
         .success()
-        .stdout(
+        .stdout(predicate::str::starts_with(
             "next: schedule=\"15 18 * * 1,4\" (from \"mon,thu at 18:15\") count=5\n\
              meaning: At 18:15, on Monday and Thursday\n",
-        );
+        ));
 }
 
 #[test]

@@ -1,6 +1,8 @@
 use std::process::ExitCode;
 
 use clap::Parser;
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 
 use cronsim::cli::{AddArgs, Cli, Command};
 use cronsim::schedule::Schedule;
@@ -49,6 +51,7 @@ fn dispatch(cli: Cli) {
         Command::Next { schedule, count } => {
             println!("next: schedule={} count={count}", label(&schedule));
             explain(&schedule);
+            print_next_runs(&schedule, count.into());
         }
         Command::Doctor => println!("doctor"),
         Command::Exec { name } => println!("exec: name={name:?}"),
@@ -64,6 +67,31 @@ fn label(schedule: &Schedule) -> String {
         format!("{normalised:?}")
     } else {
         format!("{normalised:?} (from {:?})", schedule.source())
+    }
+}
+
+fn print_next_runs(schedule: &Schedule, count: usize) {
+    let (now, zone) = match TimeZone::try_system() {
+        Ok(tz) => {
+            let now = Timestamp::now().to_zoned(tz);
+            let name = match now.time_zone().iana_name() {
+                Some(name) => name.to_string(),
+                None => now.strftime("%Z").to_string(),
+            };
+            (now, format!("{name} (system local)"))
+        }
+        Err(_) => (
+            Timestamp::now().to_zoned(TimeZone::UTC),
+            "UTC (no system time zone found)".to_string(),
+        ),
+    };
+    println!("time zone: {zone}");
+    let runs = schedule.next_runs(&now, count);
+    if runs.is_empty() {
+        println!("(never fires)");
+    }
+    for run in runs {
+        println!("  {}", run.strftime("%a %Y-%m-%d %H:%M %:z"));
     }
 }
 
