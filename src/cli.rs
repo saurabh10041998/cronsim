@@ -48,9 +48,12 @@ pub enum Command {
     Run {
         #[arg(value_parser = parse_job_name)]
         name: String,
-        /// Reproduce cron's environment and conditions exactly
+        /// Start from cron's minimal environment instead of yours
         #[arg(long)]
         as_cron: bool,
+        /// Don't set TERM=dumb, NO_COLOR=1, PAGER=cat, … for the job
+        #[arg(long)]
+        no_noninteractive_env: bool,
     },
     /// Comment out the job's crontab line
     Pause {
@@ -386,6 +389,7 @@ mod tests {
             &["logs", "job"],
             &["logs", "job", "--run", "20261021T021500Z-42", "-f"],
             &["run", "job", "--as-cron"],
+            &["run", "job", "--no-noninteractive-env"],
             &["pause", "job"],
             &["resume", "job"],
             &["remove", "job", "--purge"],
