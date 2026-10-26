@@ -17,7 +17,6 @@ pub struct Entry {
 pub struct JobView {
     pub schedule: Schedule,
     pub paused: bool,
-    /// `None` when paused or the schedule never fires.
     pub next_run: Option<Zoned>,
     pub last_run: Result<Option<RunRecord>, String>,
 }
@@ -168,7 +167,6 @@ enum JsonEntry<'a> {
     },
 }
 
-/// Times are RFC 3339 in UTC, like the run history.
 pub fn to_json(entries: &[Entry]) -> String {
     let jobs = entries
         .iter()

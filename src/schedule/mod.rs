@@ -70,8 +70,6 @@ impl Schedule {
         &self.source
     }
 
-    /// What the user typed, when it differs from the normalised form by more
-    /// than whitespace (aliases, human syntax).
     pub fn typed_form(&self) -> Option<&str> {
         let typed = self.source.split_whitespace().collect::<Vec<_>>();
         (typed.join(" ") != self.to_string()).then_some(self.source.as_str())
