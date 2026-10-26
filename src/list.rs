@@ -135,7 +135,7 @@ fn to_jiff(t: OffsetDateTime) -> Option<Timestamp> {
 }
 
 /// Rounded down to the largest whole unit: `41s`, `12m`, `1h`.
-fn duration(secs: i64) -> String {
+pub(crate) fn duration(secs: i64) -> String {
     let secs = secs.max(0);
     match secs {
         0..60 => format!("{secs}s"),

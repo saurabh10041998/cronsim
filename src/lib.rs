@@ -1,7 +1,9 @@
 pub mod add;
 pub mod cli;
+pub mod exec;
 pub mod history;
 pub mod job;
 pub mod list;
 pub mod schedule;
 pub mod store;
+pub mod tty;

@@ -6,6 +6,8 @@ use jiff::{Timestamp, Zoned};
 
 use cronsim::add::{self, Added};
 use cronsim::cli::{AddArgs, Cli, Command};
+use cronsim::exec::{self, RunOptions};
+use cronsim::history::Trigger;
 use cronsim::job;
 use cronsim::list;
 use cronsim::schedule::Schedule;
@@ -24,7 +26,21 @@ fn dispatch(cli: Cli) -> ExitCode {
         Command::Logs { name, run, follow } => {
             println!("logs: name={name:?} run={run:?} follow={follow}")
         }
-        Command::Run { name, as_cron } => println!("run: name={name:?} as_cron={as_cron}"),
+        Command::Run {
+            name,
+            as_cron,
+            no_noninteractive_env,
+        } => {
+            return run_run(
+                &name,
+                &RunOptions {
+                    trigger: Trigger::Manual,
+                    as_cron,
+                    noninteractive_env: !no_noninteractive_env,
+                    stream: true,
+                },
+            );
+        }
         Command::Pause { name } => println!("pause: name={name:?}"),
         Command::Resume { name } => println!("resume: name={name:?}"),
         Command::Remove { name, purge } => println!("remove: name={name:?} purge={purge}"),
@@ -37,6 +53,27 @@ fn dispatch(cli: Cli) -> ExitCode {
         Command::Exec { name } => println!("exec: name={name:?}"),
     }
     ExitCode::SUCCESS
+}
+
+fn run_run(name: &str, opts: &RunOptions) -> ExitCode {
+    let report = Store::from_env()
+        .map_err(exec::ExecError::from)
+        .and_then(|store| exec::run_job(&store, name, opts, std::env::vars_os()));
+    let report = match report {
+        Ok(report) => report,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    for warning in &report.warnings {
+        eprintln!("warning: {warning}");
+    }
+    eprintln!("{}", report.summary());
+    if let Some(log) = &report.log {
+        eprintln!("log: {}", log.display());
+    }
+    ExitCode::from(report.exit_code)
 }
 
 fn run_add(args: AddArgs) -> ExitCode {
