@@ -6,6 +6,7 @@ use jiff::{Timestamp, Zoned};
 
 use cronsim::add::{self, Added};
 use cronsim::cli::{AddArgs, Cli, Command};
+use cronsim::doctor::{self, Host};
 use cronsim::exec::{self, RunOptions};
 use cronsim::history::Trigger;
 use cronsim::job;
@@ -49,10 +50,19 @@ fn dispatch(cli: Cli) -> ExitCode {
             explain(&schedule);
             print_next_runs(&schedule, count.into());
         }
-        Command::Doctor => println!("doctor"),
+        Command::Doctor => return run_doctor(),
         Command::Exec { name } => println!("exec: name={name:?}"),
     }
     ExitCode::SUCCESS
+}
+
+fn run_doctor() -> ExitCode {
+    let report = doctor::check(&Store::from_env(), &Host::system());
+    print!("{}", report.render());
+    match report.counts() {
+        (0, _) => ExitCode::SUCCESS,
+        _ => ExitCode::FAILURE,
+    }
 }
 
 fn run_run(name: &str, opts: &RunOptions) -> ExitCode {

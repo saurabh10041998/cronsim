@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::AddArgs;
 use crate::job::{self, Command, JobSpec};
+use crate::lint;
 use crate::store::{Store, StoreError};
 
 pub struct Added {
@@ -77,6 +78,11 @@ pub fn add(
     spec.workdir = args.workdir;
     spec.keep_runs = args.keep_runs as usize;
     store.save_job(&spec)?;
+    warnings.extend(
+        lint::lint_command(&spec.command)
+            .into_iter()
+            .map(|finding| format!("{finding} (hint: {})", finding.hint)),
+    );
     Ok(Added {
         path: store.job_path(&spec.name),
         spec,
@@ -92,11 +98,7 @@ fn resolve_program(
     warnings: &mut Vec<String>,
 ) -> Result<String, AddError> {
     if !program.contains('/') {
-        let found = path
-            .split(':')
-            .filter(|dir| !dir.is_empty())
-            .any(|dir| is_executable(&Path::new(dir).join(&program)));
-        if !found {
+        if find_on_path(&program, path).is_none() {
             warnings.push(format!(
                 "'{program}' is not on the job's PATH ({path}); it will fail under cron"
             ));
@@ -118,6 +120,13 @@ fn resolve_program(
         return Err(AddError::NotExecutable(resolved));
     }
     Ok(resolved.to_string_lossy().into_owned())
+}
+
+pub fn find_on_path(program: &str, path: &str) -> Option<PathBuf> {
+    path.split(':')
+        .filter(|dir| !dir.is_empty())
+        .map(|dir| Path::new(dir).join(program))
+        .find(|candidate| is_executable(candidate))
 }
 
 pub fn is_executable(path: &Path) -> bool {
