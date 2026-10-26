@@ -86,7 +86,7 @@ pub enum Command {
         )]
         count: u16,
     },
-    /// Check the environment: crond, crontab access, TTY lint on jobs
+    /// Check the environment: crond, crontab access, TTY and script lint on jobs
     Doctor,
     /// Called by cron
     #[command(hide = true)]

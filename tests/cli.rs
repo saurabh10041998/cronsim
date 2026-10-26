@@ -161,6 +161,30 @@ fn add_shows_typed_schedule_and_warnings() {
 }
 
 #[test]
+fn add_warns_about_tty_problems() {
+    let home = TempDir::new().unwrap();
+    cronsim_in(&home)
+        .env("PATH", "/usr/bin:/bin")
+        .args([
+            "add",
+            "j",
+            "-s",
+            "@daily",
+            "--",
+            "sh",
+            "-c",
+            "sudo apt update",
+        ])
+        .assert()
+        .success()
+        .stderr(
+            "warning: line 1: 'sudo' without -n waits for a password under cron \
+             (hint: use 'sudo -n' with a NOPASSWD rule, or run the job as that user)\n",
+        );
+    assert!(home.path().join("jobs/j.toml").exists());
+}
+
+#[test]
 fn add_never_touches_store_on_usage_error() {
     cronsim()
         .args(["add", "j", "-s", "@daily", "--timeout", "1h30m", "--", "ls"])
