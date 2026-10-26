@@ -18,6 +18,8 @@ pub struct Store {
     root: PathBuf,
 }
 
+pub type ListedJob = (String, Result<JobSpec, StoreError>);
+
 #[derive(Debug)]
 pub struct JobLock {
     _file: File,
@@ -85,7 +87,7 @@ impl Store {
     }
 
     /// Every job, sorted by name. One unreadable spec doesn't hide the others.
-    pub fn list_jobs(&self) -> Result<Vec<Result<JobSpec, StoreError>>, StoreError> {
+    pub fn list_jobs(&self) -> Result<Vec<ListedJob>, StoreError> {
         let dir = self.root.join(JOBS);
         let mut names = Vec::new();
         for entry in fs::read_dir(&dir).map_err(|e| io_error(&dir, e))? {
@@ -100,7 +102,13 @@ impl Store {
             }
         }
         names.sort();
-        Ok(names.iter().map(|name| self.load_job(name)).collect())
+        Ok(names
+            .into_iter()
+            .map(|name| {
+                let job = self.load_job(&name);
+                (name, job)
+            })
+            .collect())
     }
 
     /// Lock files are kept: deleting one while a run holds it would let the
@@ -473,9 +481,12 @@ pub(crate) mod tests {
         let listed = store.list_jobs().unwrap();
         let names: Vec<_> = listed
             .iter()
-            .map(|job| job.as_ref().map(|spec| spec.name.as_str()).ok())
+            .map(|(name, job)| (name.as_str(), job.is_ok()))
             .collect();
-        assert_eq!(names, [Some("a"), Some("b"), None, Some("c")]);
+        assert_eq!(
+            names,
+            [("a", true), ("b", true), ("broken", false), ("c", true)]
+        );
     }
 
     #[test]

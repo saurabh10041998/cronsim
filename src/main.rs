@@ -7,6 +7,7 @@ use jiff::{Timestamp, Zoned};
 use cronsim::add::{self, Added};
 use cronsim::cli::{AddArgs, Cli, Command};
 use cronsim::job;
+use cronsim::list;
 use cronsim::schedule::Schedule;
 use cronsim::store::Store;
 
@@ -18,7 +19,7 @@ fn main() -> ExitCode {
 fn dispatch(cli: Cli) -> ExitCode {
     match cli.command {
         Command::Add(args) => return run_add(args),
-        Command::List { json } => println!("list: json={json}"),
+        Command::List { json } => return run_list(json),
         Command::Status { name, json } => println!("status: name={name:?} json={json}"),
         Command::Logs { name, run, follow } => {
             println!("logs: name={name:?} run={run:?} follow={follow}")
@@ -67,7 +68,7 @@ fn run_add(args: AddArgs) -> ExitCode {
         None => "never".to_string(),
     };
     println!("added: {}", spec.name);
-    match typed_form(schedule) {
+    match schedule.typed_form() {
         Some(typed) => println!("  schedule: {schedule} (from {typed:?})"),
         None => println!("  schedule: {schedule}"),
     }
@@ -96,17 +97,35 @@ fn shell_quote(arg: &str) -> String {
 
 /// The normalised schedule, plus what the user typed when that differs.
 fn label(schedule: &Schedule) -> String {
-    match typed_form(schedule) {
+    match schedule.typed_form() {
         Some(typed) => format!("{:?} (from {typed:?})", schedule.to_string()),
         None => format!("{:?}", schedule.to_string()),
     }
 }
 
-/// What the user typed, when it differs from the normalised form by more
-/// than whitespace (aliases, human syntax).
-fn typed_form(schedule: &Schedule) -> Option<&str> {
-    let typed = schedule.source().split_whitespace().collect::<Vec<_>>();
-    (typed.join(" ") != schedule.to_string()).then(|| schedule.source())
+fn run_list(json: bool) -> ExitCode {
+    let (now, zone) = system_now();
+    let entries = match Store::from_env().and_then(|store| list::entries(&store, &now)) {
+        Ok(entries) => entries,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if json {
+        print!("{}", list::to_json(&entries));
+    } else if entries.is_empty() {
+        println!("no jobs yet; add one with: cronsim add <NAME> -s <SCHEDULE> -- <cmd>");
+    } else {
+        print!("{}", list::render_table(&entries, now.time_zone(), &zone));
+        println!("note: jobs are saved but not in your crontab yet, so cron won't run them");
+    }
+    let mut code = ExitCode::SUCCESS;
+    for error in entries.iter().flat_map(list::Entry::errors) {
+        eprintln!("warning: {error}");
+        code = ExitCode::FAILURE;
+    }
+    code
 }
 
 /// Now in the system time zone, and how to name that zone.

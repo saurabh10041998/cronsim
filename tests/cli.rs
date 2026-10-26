@@ -3,8 +3,11 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
+use cronsim::history::{Outcome, RunId, RunRecord, Trigger};
+use cronsim::store::Store;
 use predicates::prelude::*;
 use tempfile::TempDir;
+use time::OffsetDateTime;
 
 /// `CRONSIM_HOME` points somewhere that can't be created, so a command that
 /// touches the store by mistake fails instead of writing to the real home.
@@ -320,4 +323,124 @@ fn exec_is_hidden_but_callable() {
         .assert()
         .success()
         .stdout("exec: name=\"backup\"\n");
+}
+
+#[test]
+fn list_empty_store() {
+    let home = TempDir::new().unwrap();
+    cronsim_in(&home)
+        .arg("list")
+        .assert()
+        .success()
+        .stdout("no jobs yet; add one with: cronsim add <NAME> -s <SCHEDULE> -- <cmd>\n")
+        .stderr("");
+    cronsim_in(&home)
+        .args(["list", "--json"])
+        .assert()
+        .success()
+        .stdout("{\n  \"jobs\": []\n}\n");
+}
+
+fn add_job(home: &TempDir, name: &str, schedule: &str) {
+    cronsim_in(home)
+        .args(["add", name, "-s", schedule, "--", "ls"])
+        .assert()
+        .success();
+}
+
+fn seed_run(home: &TempDir, job: &str, outcome: Outcome) {
+    let store = Store::open(home.path().to_path_buf()).unwrap();
+    let started = OffsetDateTime::from_unix_timestamp(1_792_980_000).unwrap();
+    let record = RunRecord::new(
+        job,
+        RunId::new(started, 4242),
+        started,
+        started + time::Duration::seconds(41),
+        outcome,
+        Trigger::Cron,
+    )
+    .unwrap();
+    store.append_run(&record).unwrap();
+}
+
+#[test]
+fn list_shows_jobs() {
+    let home = TempDir::new().unwrap();
+    add_job(&home, "report", "daily at 02:30");
+    add_job(&home, "backup", "*/15 * * * *");
+    seed_run(&home, "report", Outcome::Exited(2));
+    cronsim_in(&home)
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::is_match(
+                r"^NAME     SCHEDULE         NEXT RUN               LAST RESULT
+backup   \*/15 \* \* \* \*     \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2}   never run
+report   daily at 02:30   \w{3} \d{4}-\d{2}-\d{2} 02:30   exit 2, Mon 2026-10-26 02:00 \(41s\)
+time zone: .*
+note: jobs are saved but not in your crontab yet, so cron won't run them
+$",
+            )
+            .unwrap(),
+        )
+        .stderr("");
+}
+
+#[test]
+fn list_json() {
+    let home = TempDir::new().unwrap();
+    add_job(&home, "backup", "every 15m");
+    seed_run(&home, "backup", Outcome::Exited(0));
+    let output = cronsim_in(&home)
+        .args(["list", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let job = &json["jobs"][0];
+    assert_eq!(job["name"], "backup");
+    assert_eq!(job["schedule"]["source"], "every 15m");
+    assert_eq!(job["schedule"]["cron"], "*/15 * * * *");
+    assert_eq!(job["paused"], false);
+    assert!(job["next_run"].as_str().unwrap().ends_with('Z'), "{job}");
+    assert_eq!(job["last_run"]["outcome"]["exited"], 0);
+    assert_eq!(json["jobs"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn list_reports_broken_job_and_exits_1() {
+    let home = TempDir::new().unwrap();
+    add_job(&home, "backup", "@daily");
+    fs::write(home.path().join("jobs/broken.toml"), "???").unwrap();
+    cronsim_in(&home)
+        .arg("list")
+        .assert()
+        .code(1)
+        .stdout(
+            predicate::str::contains("\nbackup   @daily     ")
+                .and(predicate::str::contains("\nbroken   (error)\n")),
+        )
+        .stderr(
+            predicate::str::starts_with("warning: ").and(predicate::str::contains("broken.toml")),
+        );
+    cronsim_in(&home)
+        .args(["list", "--json"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "\"name\": \"broken\",\n      \"error\": ",
+        ));
+}
+
+#[test]
+fn list_without_store_is_an_error() {
+    cronsim()
+        .arg("list")
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(predicate::str::starts_with("error: /dev/null/cronsim"));
 }

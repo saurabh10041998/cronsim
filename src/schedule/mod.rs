@@ -70,6 +70,11 @@ impl Schedule {
         &self.source
     }
 
+    pub fn typed_form(&self) -> Option<&str> {
+        let typed = self.source.split_whitespace().collect::<Vec<_>>();
+        (typed.join(" ") != self.to_string()).then_some(self.source.as_str())
+    }
+
     pub fn describe(&self) -> String {
         describe::describe(self)
     }
