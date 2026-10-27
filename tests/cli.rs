@@ -468,3 +468,82 @@ fn list_without_store_is_an_error() {
         .stdout("")
         .stderr(predicate::str::starts_with("error: /dev/null/cronsim"));
 }
+
+#[test]
+fn remove_deletes_job() {
+    let home = TempDir::new().unwrap();
+    add_job(&home, "backup", "@daily");
+    let spec = home.path().join("jobs/backup.toml");
+    cronsim_in(&home)
+        .args(["remove", "backup"])
+        .assert()
+        .success()
+        .stdout(format!(
+            "removed: backup
+  deleted: {}
+note: cronsim doesn't write your crontab yet, so there was no crontab line to remove
+",
+            spec.display()
+        ))
+        .stderr("");
+    assert!(!spec.exists());
+    cronsim_in(&home)
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("no jobs yet"));
+    add_job(&home, "backup", "@hourly");
+}
+
+#[test]
+fn remove_keeps_history_unless_purged() {
+    let home = TempDir::new().unwrap();
+    let runs = home.path().join("runs/backup.jsonl");
+    add_job(&home, "backup", "@daily");
+    seed_run(&home, "backup", Outcome::Exited(0));
+    cronsim_in(&home)
+        .args(["remove", "backup"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains(format!("\n  kept:    {}\n", runs.display())).and(
+                predicate::str::contains(
+                    "\nnote: history is kept; 'cronsim remove backup --purge' deletes it\n",
+                ),
+            ),
+        );
+    assert!(runs.exists());
+
+    add_job(&home, "backup", "@daily");
+    cronsim_in(&home)
+        .args(["remove", "backup", "--purge"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("\n  deleted: run history and logs\n")
+                .and(predicate::str::contains("kept:").not()),
+        );
+    assert!(!runs.exists());
+}
+
+#[test]
+fn remove_errors() {
+    let home = TempDir::new().unwrap();
+    cronsim_in(&home)
+        .args(["remove", "nope"])
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr("error: no job named 'nope'\n");
+    cronsim_in(&home)
+        .args(["remove", "../x"])
+        .assert()
+        .code(2)
+        .stdout("");
+    cronsim()
+        .args(["remove", "backup"])
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(predicate::str::starts_with("error: /dev/null/cronsim"));
+}

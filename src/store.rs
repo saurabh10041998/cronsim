@@ -121,12 +121,18 @@ impl Store {
             _ => io_error(&path, e),
         })?;
         if purge {
-            let runs = self.runs_path(name);
-            ignore_missing(fs::remove_file(&runs)).map_err(|e| io_error(&runs, e))?;
-            let logs = self.root.join(LOGS).join(name);
-            ignore_missing(fs::remove_dir_all(&logs)).map_err(|e| io_error(&logs, e))?;
+            self.purge_history(name)?;
         }
         Ok(())
+    }
+
+    /// Deletes the run history and logs; missing ones are fine.
+    pub fn purge_history(&self, name: &str) -> Result<(), StoreError> {
+        check_name(name)?;
+        let runs = self.runs_path(name);
+        ignore_missing(fs::remove_file(&runs)).map_err(|e| io_error(&runs, e))?;
+        let logs = self.logs_dir(name);
+        ignore_missing(fs::remove_dir_all(&logs)).map_err(|e| io_error(&logs, e))
     }
 
     /// `None` when another process holds the lock.
@@ -510,6 +516,11 @@ pub(crate) mod tests {
 
         store.save_job(&spec("no-history")).unwrap();
         store.remove_job("no-history", true).unwrap();
+        store.purge_history("no-history").unwrap();
+        assert!(matches!(
+            store.purge_history("../x"),
+            Err(StoreError::InvalidName(_))
+        ));
     }
 
     #[test]
