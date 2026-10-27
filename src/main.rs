@@ -11,6 +11,7 @@ use cronsim::exec::{self, RunOptions};
 use cronsim::history::Trigger;
 use cronsim::job;
 use cronsim::list;
+use cronsim::remove::{self, History, Removed};
 use cronsim::schedule::Schedule;
 use cronsim::store::Store;
 
@@ -44,7 +45,7 @@ fn dispatch(cli: Cli) -> ExitCode {
         }
         Command::Pause { name } => println!("pause: name={name:?}"),
         Command::Resume { name } => println!("resume: name={name:?}"),
-        Command::Remove { name, purge } => println!("remove: name={name:?} purge={purge}"),
+        Command::Remove { name, purge } => return run_remove(&name, purge),
         Command::Next { schedule, count } => {
             println!("next: schedule={} count={count}", label(&schedule));
             explain(&schedule);
@@ -63,6 +64,35 @@ fn run_doctor() -> ExitCode {
         (0, _) => ExitCode::SUCCESS,
         _ => ExitCode::FAILURE,
     }
+}
+
+fn run_remove(name: &str, purge: bool) -> ExitCode {
+    let removed = Store::from_env()
+        .map_err(remove::RemoveError::from)
+        .and_then(|store| remove::remove(&store, name, purge));
+    let Removed { spec, history } = match removed {
+        Ok(removed) => removed,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!("removed: {name}");
+    println!("  deleted: {}", spec.display());
+    match history {
+        History::None => {}
+        History::Kept(paths) => {
+            for path in paths {
+                println!("  kept:    {}", path.display());
+            }
+            println!("note: history is kept; 'cronsim remove {name} --purge' deletes it");
+        }
+        History::Purged => println!("  deleted: run history and logs"),
+    }
+    println!(
+        "note: cronsim doesn't write your crontab yet, so there was no crontab line to remove"
+    );
+    ExitCode::SUCCESS
 }
 
 fn run_run(name: &str, opts: &RunOptions) -> ExitCode {

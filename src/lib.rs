@@ -6,6 +6,7 @@ pub mod history;
 pub mod job;
 pub mod lint;
 pub mod list;
+pub mod remove;
 pub mod schedule;
 pub mod store;
 pub mod tty;

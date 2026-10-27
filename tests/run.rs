@@ -295,3 +295,37 @@ fn ctrl_c_stops_the_job() {
     let runs = store(&home).runs("j").unwrap();
     assert_eq!(runs[0].outcome, Outcome::Signaled(15));
 }
+
+#[test]
+fn remove_while_running() {
+    let home = TempDir::new().unwrap();
+    let workdir = home.path().to_str().unwrap();
+    add(
+        &home,
+        "j",
+        &["--workdir", workdir],
+        "echo $$ > job.pid; while [ ! -e go ]; do sleep 0.05; done",
+    );
+    let mut run = Process::new(env!("CARGO_BIN_EXE_cronsim"))
+        .args(["run", "j"])
+        .env("CRONSIM_HOME", home.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_for_file(&home.path().join("job.pid"));
+
+    cronsim(&home)
+        .args(["remove", "j", "--purge"])
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr("error: job 'j' is running; wait for it to finish, or remove it without --purge\n");
+    assert!(home.path().join("jobs/j.toml").exists());
+    cronsim(&home).args(["remove", "j"]).assert().success();
+
+    fs::write(home.path().join("go"), "").unwrap();
+    assert!(run.wait().unwrap().success());
+    let runs = store(&home).runs("j").unwrap();
+    assert_eq!(runs[0].outcome, Outcome::Exited(0));
+}
