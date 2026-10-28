@@ -3,7 +3,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
-use cronsim::history::{Outcome, RunId, RunRecord, Trigger};
+use cronsim::history::{Outcome, RunId, RunRecord, SkipReason, Trigger};
 use cronsim::store::Store;
 use predicates::prelude::*;
 use tempfile::TempDir;
@@ -193,15 +193,6 @@ fn add_never_touches_store_on_usage_error() {
         .stderr(predicate::str::contains(
             "invalid value '1h30m' for '--timeout <DUR>'",
         ));
-}
-
-#[test]
-fn logs_prints_parameters() {
-    cronsim()
-        .args(["logs", "backup", "--run", "20261021T021500Z-42", "-f"])
-        .assert()
-        .success()
-        .stdout("logs: name=\"backup\" run=Some(\"20261021T021500Z-42\") follow=true\n");
 }
 
 #[test]
@@ -689,6 +680,87 @@ fn status_prints_warnings() {
 fn status_without_store_is_an_error() {
     cronsim()
         .arg("status")
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(predicate::str::starts_with("error: /dev/null/cronsim"));
+}
+
+#[test]
+fn logs_of_a_skipped_run() {
+    let home = TempDir::new().unwrap();
+    add_job(&home, "backup", "@daily");
+    seed_run(&home, "backup", Outcome::Skipped(SkipReason::Overlap));
+    cronsim_in(&home)
+        .args(["logs", "backup"])
+        .assert()
+        .success()
+        .stdout("")
+        .stderr(
+            "run 20261026T020000Z-4242, Mon 2026-10-26 02:00 (cron): skipped (overlap); no output\n",
+        );
+}
+
+#[test]
+fn logs_errors() {
+    let home = TempDir::new().unwrap();
+    cronsim_in(&home)
+        .args(["logs", "nope"])
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr("error: no job named 'nope'\n");
+    add_job(&home, "backup", "@daily");
+    cronsim_in(&home)
+        .args(["logs", "backup"])
+        .assert()
+        .code(1)
+        .stderr("error: 'backup' has no runs yet; start one with: cronsim run backup\n");
+    seed_run(&home, "backup", Outcome::Exited(0));
+    cronsim_in(&home)
+        .args(["logs", "backup", "--run", "20261021T021500Z-42"])
+        .assert()
+        .code(1)
+        .stderr(
+            "error: 'backup' has no run '20261021T021500Z-42'; cronsim status backup lists them\n",
+        );
+    cronsim_in(&home)
+        .args(["logs", "backup"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::starts_with(
+            "error: the log of run '20261026T020000Z-4242' is gone: ",
+        ));
+    cronsim_in(&home)
+        .args(["logs", "backup", "--run", "garbage"])
+        .assert()
+        .code(2)
+        .stdout("");
+}
+
+#[test]
+fn logs_of_a_removed_job() {
+    let home = TempDir::new().unwrap();
+    add_job(&home, "backup", "@daily");
+    seed_run(&home, "backup", Outcome::Exited(0));
+    let log = home.path().join("logs/backup/20261026T020000Z-4242.log");
+    fs::create_dir_all(log.parent().unwrap()).unwrap();
+    fs::write(&log, "kept\n").unwrap();
+    cronsim_in(&home)
+        .args(["remove", "backup"])
+        .assert()
+        .success();
+    cronsim_in(&home)
+        .args(["logs", "backup"])
+        .assert()
+        .success()
+        .stdout("kept\n");
+}
+
+#[test]
+fn logs_without_store_is_an_error() {
+    cronsim()
+        .args(["logs", "backup"])
         .assert()
         .code(1)
         .stdout("")
