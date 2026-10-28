@@ -8,11 +8,12 @@ use cronsim::add::{self, Added};
 use cronsim::cli::{AddArgs, Cli, Command};
 use cronsim::doctor::{self, Host};
 use cronsim::exec::{self, RunOptions};
+use cronsim::format;
 use cronsim::history::Trigger;
-use cronsim::job;
 use cronsim::list;
 use cronsim::remove::{self, History, Removed};
 use cronsim::schedule::Schedule;
+use cronsim::status;
 use cronsim::store::Store;
 
 fn main() -> ExitCode {
@@ -24,7 +25,7 @@ fn dispatch(cli: Cli) -> ExitCode {
     match cli.command {
         Command::Add(args) => return run_add(args),
         Command::List { json } => return run_list(json),
-        Command::Status { name, json } => println!("status: name={name:?} json={json}"),
+        Command::Status { name, json } => return run_status(name.as_deref(), json),
         Command::Logs { name, run, follow } => {
             println!("logs: name={name:?} run={run:?} follow={follow}")
         }
@@ -132,14 +133,7 @@ fn run_add(args: AddArgs) -> ExitCode {
         }
     };
     let schedule = &spec.schedule;
-    let command = match &spec.command {
-        job::Command::Exec { program, args } => std::iter::once(program)
-            .chain(args)
-            .map(|arg| shell_quote(arg))
-            .collect::<Vec<_>>()
-            .join(" "),
-        job::Command::Script { path } => shell_quote(&path.to_string_lossy()),
-    };
+    let command = format::command_line(&spec.command);
     let next = match schedule.next_runs(&system_now().0, 1).first() {
         Some(run) => run.strftime("%a %Y-%m-%d %H:%M %:z").to_string(),
         None => "never".to_string(),
@@ -158,18 +152,6 @@ fn run_add(args: AddArgs) -> ExitCode {
         eprintln!("warning: {warning}");
     }
     ExitCode::SUCCESS
-}
-
-fn shell_quote(arg: &str) -> String {
-    let plain = !arg.is_empty()
-        && arg
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&b));
-    if plain {
-        arg.to_string()
-    } else {
-        format!("'{}'", arg.replace('\'', r"'\''"))
-    }
 }
 
 /// The normalised schedule, plus what the user typed when that differs.
@@ -201,6 +183,40 @@ fn run_list(json: bool) -> ExitCode {
     for error in entries.iter().flat_map(list::Entry::errors) {
         eprintln!("warning: {error}");
         code = ExitCode::FAILURE;
+    }
+    code
+}
+
+fn run_status(name: Option<&str>, json: bool) -> ExitCode {
+    let (now, zone) = system_now();
+    let statuses = Store::from_env().and_then(|store| match name {
+        Some(name) => status::status(&store, name, &now).map(|status| vec![status]),
+        None => status::status_all(&store, &now),
+    });
+    let statuses = match statuses {
+        Ok(statuses) => statuses,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if json {
+        print!("{}", status::to_json(&statuses));
+    } else if statuses.is_empty() {
+        println!("no jobs yet; add one with: cronsim add <NAME> -s <SCHEDULE> -- <cmd>");
+    } else {
+        print!("{}", status::render(&statuses, now.time_zone(), &zone));
+        println!("note: jobs are saved but not in your crontab yet, so cron won't run them");
+    }
+    let mut code = ExitCode::SUCCESS;
+    for status in &statuses {
+        for warning in status.warnings() {
+            eprintln!("warning: {}: {warning}", status.name);
+        }
+        for error in status.errors() {
+            eprintln!("warning: {error}");
+            code = ExitCode::FAILURE;
+        }
     }
     code
 }

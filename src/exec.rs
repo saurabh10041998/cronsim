@@ -17,9 +17,9 @@ use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 use time::OffsetDateTime;
 
+use crate::format;
 use crate::history::{Outcome, RunId, RunRecord, SkipReason, Trigger};
 use crate::job::{Command, JobSpec, OverlapPolicy, TtyMode};
-use crate::list;
 use crate::store::{self, JobLock, Store, StoreError};
 use crate::tty;
 
@@ -129,7 +129,7 @@ pub fn run_job(
                     &mut log,
                     format!(
                         "cronsim: timed out after {}; killed process group {pgid}\n",
-                        list::duration(after)
+                        format::duration(after)
                     ),
                 )?;
             }
@@ -325,7 +325,7 @@ fn exit_code(outcome: &Outcome) -> u8 {
 impl RunReport {
     pub fn summary(&self) -> String {
         let RunRecord { job, id, .. } = &self.record;
-        let took = list::duration((self.record.finished - self.record.started).whole_seconds());
+        let took = format::duration((self.record.finished - self.record.started).whole_seconds());
         match &self.record.outcome {
             Outcome::Exited(code) => {
                 format!("run: '{job}' exited with {code} after {took} (run {id})")
@@ -336,7 +336,7 @@ impl RunReport {
             Outcome::TimedOut => {
                 let limit = self
                     .timeout
-                    .map_or(took, |t| list::duration(t.as_secs() as i64));
+                    .map_or(took, |t| format::duration(t.as_secs() as i64));
                 format!("run: '{job}' timed out after {limit}; killed (run {id})")
             }
             Outcome::Skipped(_) => format!("run: '{job}' is already running; skipped"),

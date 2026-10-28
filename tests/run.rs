@@ -79,6 +79,14 @@ fn exit_code_output_and_history() {
         .arg("list")
         .assert()
         .stdout(predicate::str::contains("exit 3, ").and(predicate::str::contains(", manual\n")));
+    cronsim(&home)
+        .args(["status", "j"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::is_match(format!(r"\n  {}   .*   exit 3, manual\n", runs[0].id))
+                .unwrap(),
+        );
 }
 
 #[test]
