@@ -547,3 +547,150 @@ fn remove_errors() {
         .stdout("")
         .stderr(predicate::str::starts_with("error: /dev/null/cronsim"));
 }
+
+#[test]
+fn status_shows_details_and_runs() {
+    let home = TempDir::new().unwrap();
+    add_job(&home, "report", "daily at 02:30");
+    seed_run(&home, "report", Outcome::Exited(2));
+    cronsim_in(&home)
+        .args(["status", "report"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::is_match(
+                r#"^report
+  schedule:   30 2 \* \* \* \(from "daily at 02:30"\)
+  meaning:    .*
+  command:    ls
+  workdir:    -
+  env:        PATH=.*
+  timeout:    1h
+  overlap:    skip
+  tty:        non-interactive
+  on failure: -
+  keep runs:  50
+  state:      active
+  next runs:  \w{3} \d{4}-\d{2}-\d{2} 02:30, \w{3} \d{4}-\d{2}-\d{2} 02:30, \w{3} \d{4}-\d{2}-\d{2} 02:30
+  spec:       .*/jobs/report.toml
+  runs:       1 kept; last ok never; last failure Mon 2026-10-26 02:00
+
+  RUN ID                  STARTED                DURATION   RESULT
+  20261026T020000Z-4242   Mon 2026-10-26 02:00   41s        exit 2
+time zone: .*
+note: jobs are saved but not in your crontab yet, so cron won't run them
+$"#,
+            )
+            .unwrap(),
+        )
+        .stderr("");
+}
+
+#[test]
+fn status_without_name_shows_every_job() {
+    let home = TempDir::new().unwrap();
+    cronsim_in(&home)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout("no jobs yet; add one with: cronsim add <NAME> -s <SCHEDULE> -- <cmd>\n");
+    cronsim_in(&home)
+        .args(["status", "--json"])
+        .assert()
+        .success()
+        .stdout("{\n  \"jobs\": []\n}\n");
+
+    add_job(&home, "b", "@daily");
+    add_job(&home, "a", "@hourly");
+    let output = cronsim_in(&home).arg("status").assert().success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    assert!(stdout.starts_with("a\n  schedule:   0 * * * *"), "{stdout}");
+    assert!(
+        stdout.contains("\n  runs:       never run\n\nb\n"),
+        "{stdout}"
+    );
+    assert_eq!(stdout.matches("time zone: ").count(), 1, "{stdout}");
+}
+
+#[test]
+fn status_json() {
+    let home = TempDir::new().unwrap();
+    add_job(&home, "backup", "every 15m");
+    seed_run(&home, "backup", Outcome::Exited(0));
+    let output = cronsim_in(&home)
+        .args(["status", "backup", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let job = &json["jobs"][0];
+    assert_eq!(json["jobs"].as_array().unwrap().len(), 1);
+    assert_eq!(job["name"], "backup");
+    assert_eq!(job["schedule"]["cron"], "*/15 * * * *");
+    assert_eq!(job["command"]["program"], "ls");
+    assert_eq!(job["runs_kept"], 1);
+    assert_eq!(job["runs"][0]["outcome"]["exited"], 0);
+    assert_eq!(job["last_ok"], job["runs"][0]);
+    assert_eq!(job["next_runs"].as_array().unwrap().len(), 3);
+    assert!(
+        job["next_runs"][0].as_str().unwrap().ends_with('Z'),
+        "{job}"
+    );
+}
+
+#[test]
+fn status_of_missing_or_invalid_job() {
+    let home = TempDir::new().unwrap();
+    cronsim_in(&home)
+        .args(["status", "nope"])
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr("error: no job named 'nope'\n");
+    cronsim_in(&home)
+        .args(["status", "../x"])
+        .assert()
+        .code(2)
+        .stdout("");
+}
+
+#[test]
+fn status_reports_broken_job_and_exits_1() {
+    let home = TempDir::new().unwrap();
+    add_job(&home, "backup", "@daily");
+    fs::write(home.path().join("jobs/broken.toml"), "???").unwrap();
+    cronsim_in(&home)
+        .arg("status")
+        .assert()
+        .code(1)
+        .stdout(
+            predicate::str::starts_with("backup\n")
+                .and(predicate::str::contains("\n\nbroken\n  error: ")),
+        )
+        .stderr(
+            predicate::str::starts_with("warning: ").and(predicate::str::contains("broken.toml")),
+        );
+}
+
+#[test]
+fn status_prints_warnings() {
+    let home = TempDir::new().unwrap();
+    add_job(&home, "seven", "*/7 * * * *");
+    cronsim_in(&home)
+        .args(["status", "seven"])
+        .assert()
+        .success()
+        .stderr(predicate::str::starts_with("warning: seven: minute: */7"));
+}
+
+#[test]
+fn status_without_store_is_an_error() {
+    cronsim()
+        .arg("status")
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(predicate::str::starts_with("error: /dev/null/cronsim"));
+}

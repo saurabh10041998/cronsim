@@ -1,11 +1,11 @@
 //! `cronsim list`: every job with its schedule, next run and last result.
 
+use jiff::Zoned;
 use jiff::tz::TimeZone;
-use jiff::{Timestamp, Zoned};
 use serde::Serialize;
-use time::OffsetDateTime;
 
-use crate::history::{Outcome, RunRecord, SkipReason, Trigger};
+use crate::format::{self, TIME_FORMAT};
+use crate::history::{RunRecord, Trigger};
 use crate::schedule::Schedule;
 use crate::store::{Store, StoreError};
 
@@ -56,8 +56,6 @@ pub fn entries(store: &Store, now: &Zoned) -> Result<Vec<Entry>, StoreError> {
         .collect())
 }
 
-const TIME_FORMAT: &str = "%a %Y-%m-%d %H:%M";
-
 pub fn render_table(entries: &[Entry], tz: &TimeZone, zone: &str) -> String {
     let mut rows = vec![["NAME", "SCHEDULE", "NEXT RUN", "LAST RESULT"].map(String::from)];
     for entry in entries {
@@ -88,19 +86,9 @@ pub fn render_table(entries: &[Entry], tz: &TimeZone, zone: &str) -> String {
         rows.push(row);
     }
 
-    let mut widths = [0; 4];
-    for row in &rows {
-        for (width, cell) in widths.iter_mut().zip(row) {
-            *width = (*width).max(cell.chars().count());
-        }
-    }
     let mut out = String::new();
-    for row in &rows {
-        let mut line = String::new();
-        for (cell, width) in row.iter().zip(widths) {
-            line.push_str(&format!("{cell:width$}   "));
-        }
-        out.push_str(line.trim_end());
+    for line in format::table(&rows) {
+        out.push_str(&line);
         out.push('\n');
     }
     out.push_str(&format!("time zone: {zone}\n"));
@@ -108,40 +96,16 @@ pub fn render_table(entries: &[Entry], tz: &TimeZone, zone: &str) -> String {
 }
 
 fn last_result(run: &RunRecord, tz: &TimeZone) -> String {
-    let outcome = match &run.outcome {
-        Outcome::Exited(0) => "ok".to_string(),
-        Outcome::Exited(code) => format!("exit {code}"),
-        Outcome::Signaled(signal) => format!("signal {signal}"),
-        Outcome::TimedOut => "timed out".to_string(),
-        Outcome::Skipped(SkipReason::Overlap) => "skipped (overlap)".to_string(),
-        Outcome::SpawnFailed(_) => "failed to start".to_string(),
-    };
-    let started = match to_jiff(run.started) {
-        Some(ts) => ts.to_zoned(tz.clone()).strftime(TIME_FORMAT).to_string(),
-        None => run.started.to_string(),
-    };
     let mut text = format!(
-        "{outcome}, {started} ({})",
-        duration((run.finished - run.started).whole_seconds())
+        "{}, {} ({})",
+        format::outcome_text(&run.outcome),
+        format::local_time(run.started, tz),
+        format::duration((run.finished - run.started).whole_seconds())
     );
     if run.trigger == Trigger::Manual {
         text.push_str(", manual");
     }
     text
-}
-
-fn to_jiff(t: OffsetDateTime) -> Option<Timestamp> {
-    Timestamp::new(t.unix_timestamp(), t.nanosecond() as i32).ok()
-}
-
-/// Rounded down to the largest whole unit: `41s`, `12m`, `1h`.
-pub(crate) fn duration(secs: i64) -> String {
-    let secs = secs.max(0);
-    match secs {
-        0..60 => format!("{secs}s"),
-        60..3600 => format!("{}m", secs / 60),
-        _ => format!("{}h", secs / 3600),
-    }
 }
 
 #[derive(Serialize)]
@@ -195,8 +159,11 @@ pub fn to_json(entries: &[Entry]) -> String {
 mod tests {
     use std::fs;
 
+    use jiff::Timestamp;
+    use time::OffsetDateTime;
+
     use super::*;
-    use crate::history::RunId;
+    use crate::history::{Outcome, RunId, SkipReason};
     use crate::job::{Command, JobSpec};
     use crate::store::tests::store;
 
@@ -429,21 +396,6 @@ time zone: UTC (system local)
             text(Outcome::SpawnFailed("not found".into()), 0),
             "failed to start, Mon 2026-10-26 11:00 (0s)"
         );
-    }
-
-    #[test]
-    fn durations() {
-        for (secs, text) in [
-            (-1, "0s"),
-            (0, "0s"),
-            (59, "59s"),
-            (60, "1m"),
-            (3599, "59m"),
-            (3660, "1h"),
-            (90000, "25h"),
-        ] {
-            assert_eq!(duration(secs), text, "{secs}");
-        }
     }
 
     #[test]
