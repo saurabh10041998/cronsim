@@ -337,3 +337,110 @@ fn remove_while_running() {
     let runs = store(&home).runs("j").unwrap();
     assert_eq!(runs[0].outcome, Outcome::Exited(0));
 }
+
+#[test]
+fn logs_show_a_run() {
+    let home = TempDir::new().unwrap();
+    add(&home, "j", &[], "echo hi; echo err >&2; exit 3");
+    cronsim(&home).args(["run", "j"]).assert().code(3);
+    let first = store(&home).runs("j").unwrap().remove(0);
+    cronsim(&home).args(["run", "j"]).assert().code(3);
+    cronsim(&home)
+        .args(["logs", "j"])
+        .assert()
+        .success()
+        .stdout("hi\nerr\n")
+        .stderr(
+            predicate::str::is_match(
+                r"^run \d{8}T\d{6}Z-\d+, \w{3} [\d-]+ [\d:]+ \(manual\): exit 3 after \ds\n$",
+            )
+            .unwrap(),
+        );
+    let latest = store(&home).runs("j").unwrap().pop().unwrap();
+    assert_ne!(latest.id, first.id);
+    cronsim(&home)
+        .args(["logs", "j", "--run", first.id.as_str()])
+        .assert()
+        .success()
+        .stdout("hi\nerr\n")
+        .stderr(predicate::str::starts_with(format!("run {}, ", first.id)));
+}
+
+#[test]
+fn logs_follow_a_running_job() {
+    let home = TempDir::new().unwrap();
+    let workdir = home.path().to_str().unwrap();
+    add(
+        &home,
+        "j",
+        &["--workdir", workdir],
+        "echo started; echo > ready; while [ ! -e go ]; do sleep 0.05; done; echo done",
+    );
+    let mut run = Process::new(env!("CARGO_BIN_EXE_cronsim"))
+        .args(["run", "j"])
+        .env("CRONSIM_HOME", home.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_for_file(&home.path().join("ready"));
+
+    cronsim(&home)
+        .args(["logs", "j"])
+        .assert()
+        .success()
+        .stdout("started\n")
+        .stderr(predicate::str::ends_with(
+            ": running (cronsim logs j -f to follow)\n",
+        ));
+    let follow = Process::new(env!("CARGO_BIN_EXE_cronsim"))
+        .args(["logs", "j", "-f"])
+        .env("CRONSIM_HOME", home.path())
+        .env("TZ", "UTC")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    thread::sleep(Duration::from_millis(300));
+    fs::write(home.path().join("go"), "").unwrap();
+    assert!(run.wait().unwrap().success());
+    let output = follow.wait_with_output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "started\ndone\n");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(": running; following, Ctrl-C to stop\n"),
+        "{stderr}"
+    );
+    assert!(
+        predicate::str::is_match(r"\nrun \d{8}T\d{6}Z-\d+: ok after \ds\n$")
+            .unwrap()
+            .eval(&stderr),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn logs_exit_quietly_when_stdout_closes() {
+    let home = TempDir::new().unwrap();
+    add(&home, "j", &[], "seq 1 200000");
+    cronsim(&home).args(["run", "j"]).assert().success();
+    let mut logs = Process::new(env!("CARGO_BIN_EXE_cronsim"))
+        .args(["logs", "j"])
+        .env("CRONSIM_HOME", home.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut first = [0; 1];
+    std::io::Read::read_exact(logs.stdout.as_mut().unwrap(), &mut first).unwrap();
+    drop(logs.stdout.take());
+    let output = logs.wait_with_output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.starts_with("run ") && !stderr.contains("error"),
+        "{stderr}"
+    );
+    assert_eq!(stderr.lines().count(), 1, "{stderr}");
+}

@@ -273,14 +273,7 @@ fn next_runs(runs: &[Zoned], paused: bool) -> String {
 }
 
 fn result(run: &RunRecord) -> String {
-    let mut text = match &run.outcome {
-        Outcome::Signaled(signal) => match format::signal_name(*signal) {
-            Some(name) => format!("killed by {name} (signal {signal})"),
-            None => format!("killed by signal {signal}"),
-        },
-        Outcome::SpawnFailed(reason) => format!("failed to start: {reason}"),
-        outcome => format::outcome_text(outcome),
-    };
+    let mut text = format::outcome_detail(&run.outcome);
     if run.trigger == Trigger::Manual {
         text.push_str(", manual");
     }

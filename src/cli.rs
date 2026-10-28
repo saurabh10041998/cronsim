@@ -5,6 +5,7 @@ use std::time::Duration;
 use clap::{ArgGroup, Args, Parser, Subcommand};
 
 use crate::add;
+use crate::history::RunId;
 use crate::job::{self, OverlapPolicy};
 use crate::schedule::Schedule;
 
@@ -39,7 +40,7 @@ pub enum Command {
         name: String,
         /// Run id to show (defaults to the latest run)
         #[arg(long, value_name = "ID")]
-        run: Option<String>,
+        run: Option<RunId>,
         /// Keep printing output as it is written
         #[arg(short, long)]
         follow: bool,
@@ -432,6 +433,17 @@ mod tests {
             let err = parse(args).unwrap_err();
             assert_eq!(err.kind(), ErrorKind::ValueValidation, "{args:?}");
         }
+    }
+
+    #[test]
+    fn logs_run_id_is_validated() {
+        let cli = parse(&["logs", "j", "--run", "20261021T021500Z-42"]).unwrap();
+        let Command::Logs { run: Some(id), .. } = cli.command else {
+            panic!("expected logs with a run id");
+        };
+        assert_eq!(id.pid(), 42);
+        let err = parse(&["logs", "j", "--run", "garbage"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::ValueValidation);
     }
 
     #[test]

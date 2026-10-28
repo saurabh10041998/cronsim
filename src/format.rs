@@ -47,6 +47,18 @@ pub fn outcome_text(outcome: &Outcome) -> String {
     }
 }
 
+/// `outcome_text` plus the signal name and the reason a start failed.
+pub fn outcome_detail(outcome: &Outcome) -> String {
+    match outcome {
+        Outcome::Signaled(signal) => match signal_name(*signal) {
+            Some(name) => format!("killed by {name} (signal {signal})"),
+            None => format!("killed by signal {signal}"),
+        },
+        Outcome::SpawnFailed(reason) => format!("failed to start: {reason}"),
+        outcome => outcome_text(outcome),
+    }
+}
+
 /// Linux numbering.
 pub fn signal_name(signal: i32) -> Option<&'static str> {
     Some(match signal {

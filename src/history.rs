@@ -35,38 +35,56 @@ impl RunId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// The pid of the `cronsim` process that ran it.
+    pub fn pid(&self) -> u32 {
+        parse(&self.0).expect("run id was validated").1
+    }
+
+    pub fn started(&self) -> OffsetDateTime {
+        parse(&self.0).expect("run id was validated").0
+    }
 }
 
 impl FromStr for RunId {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let invalid = || format!("invalid run id '{s}'; expected e.g. 20261021T021500Z-4242");
-        let (stamp, pid) = s.split_once("Z-").ok_or_else(invalid)?;
-        if pid.is_empty() || pid.len() > 10 || !pid.bytes().all(|b| b.is_ascii_digit()) {
-            return Err(invalid());
-        }
-        let (date, time) = stamp.split_once('T').ok_or_else(invalid)?;
-        if date.len() != 8 || time.len() != 6 {
-            return Err(invalid());
-        }
-        let num = |part: &str| part.parse::<u16>().map_err(|_| invalid());
-        let month = Month::try_from(num(&date[4..6])? as u8).map_err(|_| invalid())?;
-        let date = Date::from_calendar_date(num(&date[..4])?.into(), month, num(&date[6..])? as u8)
-            .map_err(|_| invalid())?;
-        let time = Time::from_hms(
-            num(&time[..2])? as u8,
-            num(&time[2..4])? as u8,
-            num(&time[4..])? as u8,
-        )
-        .map_err(|_| invalid())?;
-        let started = PrimitiveDateTime::new(date, time).assume_utc();
-        let id = Self::new(started, pid.parse().map_err(|_| invalid())?);
+        let (started, pid) = parse(s)?;
+        let id = Self::new(started, pid);
         if id.0 != s {
-            return Err(invalid());
+            return Err(invalid_id(s));
         }
         Ok(id)
     }
+}
+
+fn invalid_id(s: &str) -> String {
+    format!("invalid run id '{s}'; expected e.g. 20261021T021500Z-4242")
+}
+
+fn parse(s: &str) -> Result<(OffsetDateTime, u32), String> {
+    let invalid = || invalid_id(s);
+    let (stamp, pid) = s.split_once("Z-").ok_or_else(invalid)?;
+    if pid.is_empty() || pid.len() > 10 || !pid.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(invalid());
+    }
+    let (date, time) = stamp.split_once('T').ok_or_else(invalid)?;
+    if date.len() != 8 || time.len() != 6 {
+        return Err(invalid());
+    }
+    let num = |part: &str| part.parse::<u16>().map_err(|_| invalid());
+    let month = Month::try_from(num(&date[4..6])? as u8).map_err(|_| invalid())?;
+    let date = Date::from_calendar_date(num(&date[..4])?.into(), month, num(&date[6..])? as u8)
+        .map_err(|_| invalid())?;
+    let time = Time::from_hms(
+        num(&time[..2])? as u8,
+        num(&time[2..4])? as u8,
+        num(&time[4..])? as u8,
+    )
+    .map_err(|_| invalid())?;
+    let started = PrimitiveDateTime::new(date, time).assume_utc();
+    Ok((started, pid.parse().map_err(|_| invalid())?))
 }
 
 impl TryFrom<String> for RunId {
@@ -286,7 +304,10 @@ mod tests {
         assert_eq!(RunId::new(ist, 4242), id);
         let later = RunId::new(start() + Duration::seconds(1), 1);
         assert!(id < later);
-        assert_eq!(id.to_string().parse::<RunId>(), Ok(id));
+        assert_eq!(id.to_string().parse::<RunId>(), Ok(id.clone()));
+        assert_eq!(id.pid(), 4242);
+        assert_eq!(id.started(), start().replace_millisecond(0).unwrap());
+        assert_eq!(id.started().offset(), UtcOffset::UTC);
     }
 
     #[test]

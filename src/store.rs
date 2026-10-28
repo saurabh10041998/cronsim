@@ -171,6 +171,30 @@ impl Store {
             .map_err(|e| io_error(&path, e))
     }
 
+    /// Ids of the job's log files, sorted. Other files are ignored.
+    pub fn log_ids(&self, name: &str) -> Result<Vec<RunId>, StoreError> {
+        check_name(name)?;
+        let dir = self.logs_dir(name);
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(io_error(&dir, e)),
+        };
+        let mut ids = Vec::new();
+        for entry in entries {
+            let file_name = entry.map_err(|e| io_error(&dir, e))?.file_name();
+            if let Some(id) = file_name
+                .to_str()
+                .and_then(|n| n.strip_suffix(".log"))
+                .and_then(|n| n.parse::<RunId>().ok())
+            {
+                ids.push(id);
+            }
+        }
+        ids.sort();
+        Ok(ids)
+    }
+
     pub fn job_path(&self, name: &str) -> PathBuf {
         self.root.join(JOBS).join(format!("{name}.toml"))
     }
@@ -580,5 +604,30 @@ pub(crate) mod tests {
         assert_eq!(mode(&path), 0o600);
         assert_eq!(mode(path.parent().unwrap()), 0o700);
         assert!(store.create_log("j", &id).is_err());
+    }
+
+    #[test]
+    fn log_ids_are_sorted_and_skip_other_files() {
+        let (_dir, store) = store();
+        assert_eq!(store.log_ids("j").unwrap(), []);
+        let ids: Vec<RunId> = ["20261021T021600Z-7", "20261021T021500Z-42"]
+            .iter()
+            .map(|s| s.parse().unwrap())
+            .collect();
+        for id in &ids {
+            store.create_log("j", id).unwrap();
+        }
+        let dir = store.root().join("logs/j");
+        fs::write(dir.join("notes.txt"), "").unwrap();
+        fs::write(dir.join("garbage.log"), "").unwrap();
+        fs::write(dir.join("20261021T021500Z-42.log.tmp"), "").unwrap();
+        assert_eq!(
+            store.log_ids("j").unwrap(),
+            [ids[1].clone(), ids[0].clone()]
+        );
+        assert!(matches!(
+            store.log_ids("../x"),
+            Err(StoreError::InvalidName(_))
+        ));
     }
 }
